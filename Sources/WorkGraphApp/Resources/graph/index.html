@@ -2711,7 +2711,7 @@ qr.readability=function(t,n){var e=qr(t),r=qr(n);return(Math.max(e.getLuminance(
     const IX = svg('<path d="M18 6 6 18"/><path d="m6 6 12 12"/>'), IBACK = svg('<path d="m15 18-6-6 6-6"/>'), IOPEN = svg('<path d="M7 17 17 7"/><path d="M7 7h10v10"/>');
     // 카드 머리: 왼쪽은 분야(업무 카드에서는 눌러서 분야 카드로), 오른쪽 X 는 카드를 닫고 전체 보기로
     const cardHead = left => `<div class="cv-hd">${left}<button type="button" class="cv-x" data-a="close" aria-label="닫기" title="닫기">${IX}</button></div>`;
-    const OPENABLE = /^(file:.|https?:\/\/|local:\d|arxiv:.|doi:.)/;
+    const OPENABLE = /^(file:.|https?:\/\/|local:\d|arxiv:.|doi:.|recording:\d)/;
     const openAttr = (t, k, name) => {                       // 자료·산출물은 자료 키, 앱은 번들 id 를 달아 두면 눌러서 연다
       const v = k === 'app' ? t.open && t.open['app:' + name] : k === 'ref' || k === 'out' ? t.open && t.open['r:' + name] : null;
       if (!v) return '';

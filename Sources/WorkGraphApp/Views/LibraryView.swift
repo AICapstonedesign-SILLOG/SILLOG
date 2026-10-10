@@ -40,20 +40,57 @@ private struct LibraryTile: View {
     }
 }
 
+/// 보관함 목록 한 줄: 보관한 자료 또는 녹음
+private enum LibraryEntry: Identifiable {
+    case item(ChatLibraryItem)
+    case recording(Recording)
+
+    var id: String {
+        switch self {
+        case .item(let item): "item:\(item.id)"
+        case .recording(let recording): "recording:\(recording.id ?? 0)"
+        }
+    }
+
+    var date: Double {
+        switch self {
+        case .item(let item): item.createdAt
+        case .recording(let recording): recording.startedAt
+        }
+    }
+}
+
 struct LibraryView: View {
     @ObservedObject var library: LibraryState
     @ObservedObject var projects: ProjectState
+    @EnvironmentObject private var state: AppState
     @State private var query = ""
     @State private var kind = ""
     @State private var projectID = ""
     @State private var preview: ChatLibraryItem?
     @State private var deleting: ChatLibraryItem?
+    @State private var recordingPreview: Recording?
 
     private var filtered: [ChatLibraryItem] {
         library.items.filter { item in
             (query.isEmpty || item.title.localizedCaseInsensitiveContains(query)) && (kind.isEmpty || item.kind == kind)
                 && (projectID.isEmpty || library.projectIDs(item).contains(projectID))
         }
+    }
+
+    /// 보관한 자료와 녹음을 날짜순으로. 녹음은 프로젝트에 연결하지 않으므로 프로젝트를 고르면 빠진다
+    private var entries: [LibraryEntry] {
+        let items: [LibraryEntry] = kind == "recording" ? [] : filtered.map { LibraryEntry.item($0) }
+        let showRecordings = (kind.isEmpty || kind == "recording") && projectID.isEmpty
+        let recordings: [LibraryEntry] = showRecordings
+            ? state.recordings.filter { query.isEmpty || $0.displayTitle.localizedCaseInsensitiveContains(query) }.map { LibraryEntry.recording($0) }
+            : []
+        return (items + recordings).sorted { $0.date > $1.date }
+    }
+
+    private var emptyTitle: String {
+        if kind == "recording" { return state.recordings.isEmpty ? "녹음이 없습니다" : "검색 결과가 없습니다" }
+        return library.items.isEmpty && state.recordings.isEmpty ? "보관한 자료가 없습니다" : "검색 결과가 없습니다"
     }
     var body: some View {
         HStack(spacing: 0) {
@@ -62,6 +99,8 @@ struct LibraryView: View {
             content
         }
         .sheet(item: $preview) { LibraryPreview(library: library, item: $0) }
+        .sheet(item: $recordingPreview) { RecordingDetailView(recording: $0).environmentObject(state) }
+        .onAppear { state.refreshRecordings() }
         .alert("자료를 삭제할까요?", isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } })) {
             Button("취소", role: .cancel) { deleting = nil }
             Button("삭제", role: .destructive) { if let deleting { library.delete(deleting) }; deleting = nil }
@@ -89,6 +128,7 @@ struct LibraryView: View {
                 filterRow("업로드", kind == "upload") { kind = "upload" }
                 filterRow("생성한 결과물", kind == "generated") { kind = "generated" }
                 filterRow("저장한 답변", kind == "note") { kind = "note" }
+                filterRow("녹음", kind == "recording") { kind = "recording" }
             }.padding(.top, 8)
             Eyebrow("PROJECT").padding(.top, 22).padding(.leading, 12)
             ScrollView {
@@ -127,15 +167,23 @@ struct LibraryView: View {
             if let error = library.error {
                 Text(error).font(Brand.suit(12)).foregroundStyle(.red).textSelection(.enabled).padding(.horizontal, 34).padding(.top, 10)
             }
-            if filtered.isEmpty {
+            if entries.isEmpty {
                 VStack(spacing: 8) {
-                    Image(systemName: "tray").font(.system(size: 26, weight: .light)).foregroundStyle(Brand.sub)
-                    Text(library.items.isEmpty ? "보관한 자료가 없습니다" : "검색 결과가 없습니다").font(Brand.suit(14, .medium)).foregroundStyle(Brand.ink)
-                    Text("파일을 업로드하거나 채팅에서 결과물을 만들어보세요.").font(Brand.suit(12)).foregroundStyle(Brand.gray)
+                    Image(systemName: kind == "recording" ? "waveform" : "tray").font(.system(size: 26, weight: .light)).foregroundStyle(Brand.sub)
+                    Text(emptyTitle).font(Brand.suit(14, .medium)).foregroundStyle(Brand.ink)
+                    Text(kind == "recording" ? "메뉴 막대에서 녹음 시작을 누르면 받아쓴 글이 여기에 모여요." : "파일을 업로드하거나 채팅에서 결과물을 만들어보세요.")
+                        .font(Brand.suit(12)).foregroundStyle(Brand.gray)
                 }.frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 ScrollView {
-                    LazyVStack(spacing: 0) { ForEach(filtered) { row($0) } }.padding(.horizontal, 34).padding(.top, 6)
+                    LazyVStack(spacing: 0) {
+                        ForEach(entries) { entry in
+                            switch entry {
+                            case .item(let item): row(item)
+                            case .recording(let recording): recordingRow(recording)
+                            }
+                        }
+                    }.padding(.horizontal, 34).padding(.top, 6)
                 }
             }
         }.frame(maxWidth: .infinity, maxHeight: .infinity).background(.white)
@@ -169,6 +217,20 @@ struct LibraryView: View {
                 Button("보관함에서 삭제", role: .destructive) { deleting = item }
             } label: { Image(systemName: "ellipsis").foregroundStyle(Brand.gray) }.menuStyle(.borderlessButton).frame(width: 30)
         }.padding(.vertical, 14)
+            .overlay(alignment: .bottom) { Rectangle().fill(Brand.line).frame(height: 1) }
+    }
+
+    private func recordingRow(_ recording: Recording) -> some View {
+        Button { recordingPreview = recording } label: {
+            HStack(spacing: 12) {
+                LibraryTile(symbol: "waveform")
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(recording.displayTitle).font(Brand.suit(12, .medium)).foregroundStyle(Brand.tabText).lineLimit(1)
+                    Text(RecordingDetail.subtitle(recording, home: NSHomeDirectory())).font(Brand.suit(10)).foregroundStyle(Brand.gray).lineLimit(1)
+                }.frame(maxWidth: .infinity, alignment: .leading)
+            }.contentShape(Rectangle())
+        }.buttonStyle(.plain)
+            .padding(.vertical, 14)
             .overlay(alignment: .bottom) { Rectangle().fill(Brand.line).frame(height: 1) }
     }
 }

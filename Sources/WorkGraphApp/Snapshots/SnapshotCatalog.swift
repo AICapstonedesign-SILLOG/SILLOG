@@ -36,9 +36,9 @@ enum SnapshotCatalog {
         ]
     }
 
-    /// 녹음: 메뉴 막대(녹음 중, 받아쓰는 중, 마이크 권한 꺼짐)
+    /// 녹음: 메뉴 막대(녹음 중, 받아쓰는 중, 마이크 권한 꺼짐), 보관함 녹음 상세, 보관함 목록
     static var recording: [Snapshot] {
-        [
+        let menuShots = [
             shot("REC-01", MenuBarView()) { s in
                 s.phase = .ready; s.status = collector(); s.todayCount = 62; s.pendingCount = 6; s.taskList = recentTasks
                 s.activeRecording = ActiveRecording(id: 1, startedAt: Date().timeIntervalSince1970 - 751)
@@ -52,6 +52,7 @@ enum SnapshotCatalog {
                 s.recordingProblem = .microphone
             },
         ]
+        return menuShots + [recordingDetailShot()] + [recordingLibraryShot()].compactMap { $0 }
     }
 
     static var windows: [Snapshot] {
@@ -232,6 +233,41 @@ enum SnapshotCatalog {
                                stats: failed ? nil : stats, systemPrompt: newest ? OntologyPrompt.system : nil, userPrompt: newest ? prompt : nil,
                                llmPatch: newest && !failed ? patch : nil, appliedPatch: newest && !failed ? applied : nil)
         }
+    }
+
+    /// 보관함 녹음 상세: 녹음 파일과 받아쓴 글이 있는 상태 (임시 폴더에 두 파일을 만든다)
+    private static func recordingDetailShot() -> Snapshot {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("sillog-snapshot-recording", isDirectory: true)
+        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let audio = folder.appendingPathComponent("7.m4a")
+        let text = folder.appendingPathComponent("2026-10-10 자료구조 3주차 강의.md")
+        try? Data("a".utf8).write(to: audio)
+        try? Data("# 자료구조 3주차 강의".utf8).write(to: text)
+        let state = AppState(preview: { s in s.phase = .ready })
+        let view = RecordingDetailView(recording: sampleRecording(audioPath: audio.path, textPath: text.path)).environmentObject(state)
+        return Snapshot(name: "REC-04", size: CGSize(width: 640, height: 520), view: AnyView(view))
+    }
+
+    /// 보관함 '전체 종류'에 섞인 녹음
+    private static func recordingLibraryShot() -> Snapshot? {
+        guard let database = try? WGDatabase.inMemory() else { return nil }
+        var recording = sampleRecording(audioPath: "/tmp/7.m4a", textPath: NSHomeDirectory() + "/Documents/학교/자료구조/2026-10-10 자료구조 3주차 강의.md")
+        recording.id = nil
+        _ = try? RecordingStore(database).insert(recording)
+        let state = AppState(preview: { s in
+            s.phase = .ready; s.status = collector(); s.selectedTab = .library
+            s.recordings = (try? RecordingStore(database).all()) ?? []
+            let offline = OpenAICompatClient(baseURL: URL(string: "http://localhost:5010/v1")!, model: "preview", apiKey: nil)   // 그리기만 하고 부르지 않는다
+            s.chat = ChatState(db: database, makeClient: { .model(offline) }, makeProjectClient: { offline })
+        }, database: database)
+        return Snapshot(name: "REC-05", size: window, view: AnyView(MainWindow().environmentObject(state)))
+    }
+
+    private static func sampleRecording(audioPath: String, textPath: String) -> Recording {
+        Recording(id: 7, startedAt: todayAt(15, 32), endedAt: todayAt(15, 32) + 3_130, duration: 3_130, audioPath: audioPath, textPath: textPath,
+                  title: "자료구조 3주차 강의", summary: "연결 리스트와 스택의 구현을 예제로 설명한 강의.",
+                  transcript: "오늘은 연결 리스트를 봅니다.\n노드는 값과 다음 노드를 가리키는 포인터를 가집니다.\n스택은 리스트 앞쪽에서 넣고 뺍니다.",
+                  status: .ready, readyAt: Date().timeIntervalSince1970 - 2 * 86_400)
     }
 
     // MARK: 예시 상태
