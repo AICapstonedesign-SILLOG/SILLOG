@@ -13,6 +13,7 @@ enum AppEntry {
         }
         let fonts = BrandFonts.register()
         if fonts.count < 6 { AppLog.write("글꼴 \(fonts.count)/6개만 등록됨: \(fonts.sorted())") }
+        MenuBarPlacement.preferRightSide(.standard)
         WorkGraphApp.main()
     }
 }
@@ -58,6 +59,20 @@ final class WindowOpener {
     func openMain() {
         open?()
         NSApp.activate(ignoringOtherApps: true)
+    }
+}
+
+/// 메뉴 막대 아이콘의 첫 자리. macOS 는 아이콘 자리를 앱 설정의 "NSStatusItem Preferred Position <이름>" 에 기억한다
+/// (값은 화면 오른쪽 끝에서 잰 거리, 예: 와이파이 225 · 배터리 263 · 한/영 334). 저장된 자리가 없으면 맨 왼쪽에 붙어
+/// 메뉴 막대가 붐비면 노치 뒤로 가려지므로, 시계 쪽(배터리와 한/영 사이)에 둔다. 사용자가 ⌘-드래그로 옮긴 자리는 그대로 둔다
+enum MenuBarPlacement {
+    /// SwiftUI MenuBarExtra 의 상태 막대 항목 이름은 Item-0
+    static let key = "NSStatusItem Preferred Position Item-0"
+    static let rightSide = 300.0
+
+    static func preferRightSide(_ defaults: UserDefaults) {
+        guard defaults.object(forKey: key) == nil else { return }
+        defaults.set(rightSide, forKey: key)
     }
 }
 
