@@ -56,4 +56,37 @@ final class RecordingMenuTests: XCTestCase {
         XCTAssertFalse(dot.isTemplate, "빨간색을 그대로 그린다")
         XCTAssertEqual(dot.accessibilityDescription, "녹음 중")
     }
+
+    // MARK: 일시정지·권한 경고·준비 전 메뉴에서도 녹음 (수집이 일시정지돼도 녹음은 따로 돈다)
+
+    func testPausedIdleShowsTheStartButton() {
+        let text = menuText { s in s.status.running = true; s.status.paused = true }
+        XCTAssertTrue(text.contains("녹음시작"), text)
+    }
+
+    func testPausedWhileRecordingShowsStopInstead() {
+        let text = menuText { s in
+            s.status.running = true; s.status.paused = true
+            s.activeRecording = ActiveRecording(id: 1, startedAt: Date().timeIntervalSince1970 - 751)
+        }
+        XCTAssertTrue(text.contains("끝내기"), text)
+    }
+
+    func testPermissionMissingIdleShowsTheStartButton() {
+        let text = menuText { s in s.status.running = true; s.status.accessibility = false; s.status.screenRecording = true }
+        XCTAssertTrue(text.contains("녹음시작"), text)
+    }
+
+    func testNotReadyWhileRecordingShowsOnlyTheStopRow() {
+        let text = menuText { s in
+            s.phase = .login
+            s.activeRecording = ActiveRecording(id: 1, startedAt: Date().timeIntervalSince1970 - 751)
+        }
+        XCTAssertTrue(text.contains("끝내기"), text)
+    }
+
+    func testNotReadyIdleHasNoStartButton() {
+        let text = menuText { s in s.phase = .login }
+        XCTAssertFalse(text.contains("녹음시작"), text)
+    }
 }

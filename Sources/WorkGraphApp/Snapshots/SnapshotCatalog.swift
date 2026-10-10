@@ -51,6 +51,17 @@ enum SnapshotCatalog {
                 s.phase = .ready; s.status = collector(); s.todayCount = 62; s.pendingCount = 6
                 s.recordingProblem = .microphone
             },
+            // 리뷰 포커스 1: 일시정지돼도 녹음은 따로 돈다 (W7 메뉴 + 녹음 중 줄)
+            shot("REC-06", MenuBarView()) { s in
+                s.phase = .ready; s.status = collector(paused: true)
+                s.todayCount = 8; s.pendingCount = 2; s.lastBatchText = "14:05 정리 완료(새 업무 2개, 자료 5개)"
+                s.activeRecording = ActiveRecording(id: 1, startedAt: Date().timeIntervalSince1970 - 751)
+            },
+            // 리뷰 포커스 1: 로그인 전(W2)에도 녹음 중이면 끝내기 줄만 보인다 (시작 버튼은 없다)
+            shot("REC-07", MenuBarView()) { s in
+                s.phase = .login
+                s.activeRecording = ActiveRecording(id: 1, startedAt: Date().timeIntervalSince1970 - 751)
+            },
         ]
         return menuShots + [recordingDetailShot()] + [recordingLibraryShot()].compactMap { $0 }
     }

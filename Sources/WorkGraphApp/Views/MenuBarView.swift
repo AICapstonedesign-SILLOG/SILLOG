@@ -84,6 +84,11 @@ private struct MenuBarButtons: View {
                 divider
                 MenuPrimaryButton(title: "시작하기…", action: openMain)
                     .padding(.top, 18).padding(.bottom, 16)
+                // 녹음은 수집 준비와 상관없이 따로 돈다: 켜져 있을 때만 끝내기 줄을 보인다 (시작 버튼은 없다)
+                if state.activeRecording != nil {
+                    divider
+                    MenuBarRecordingSection(allowStart: false)
+                }
             } else {
                 summary
                 divider
@@ -101,6 +106,9 @@ private struct MenuBarButtons: View {
                     }
                 }
                 .padding(.vertical, 16)
+                // 일시정지·권한 경고에서도 녹음은 그대로 켜고 끝낼 수 있다
+                divider
+                MenuBarRecordingSection(allowStart: true)
             }
             divider
             Button { NSApp.terminate(nil) } label: {
@@ -293,78 +301,8 @@ private struct MenuBarDashboard: View {
 
     /// 녹음: 문제 안내 → 정리 단계 → 녹음 줄 ([● 녹음 시작] 또는 "● 녹음 중 12:31" [■ 끝내기]). 최근 업무가 있으면 위에 선
     private var recordingSection: some View {
-        VStack(spacing: 0) {
-            if let problem = state.recordingProblem { recordingProblemRow(problem) }
-            if let work = state.recordingWork { recordingWorkRow(work) }
-            recordingRow
-        }
-        .overlay(alignment: .top) { if !state.taskList.isEmpty { hairline } }
-    }
-
-    @ViewBuilder private var recordingRow: some View {
-        if let active = state.activeRecording {
-            HStack(spacing: 8) {
-                Circle().fill(Color.red).frame(width: 8, height: 8)
-                TimelineView(.periodic(from: .now, by: 1)) { context in
-                    Text("녹음 중 \(RecordingText.clock(context.date.timeIntervalSince1970 - active.startedAt))")
-                        .font(Brand.suit(11)).foregroundStyle(Brand.text).monospacedDigit()
-                }
-                Spacer()
-                Button { Task { await state.stopRecording() } } label: {
-                    HStack(spacing: 6) {
-                        Rectangle().fill(Brand.ink).frame(width: 7, height: 7)
-                        Text("끝내기").font(Brand.suit(11, .medium)).foregroundStyle(Brand.ink)
-                    }
-                    .padding(.horizontal, 12).frame(height: 28)
-                    .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Brand.line))
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-            }
-            .frame(height: 50)
-            .overlay(alignment: .bottom) { hairline }
-        } else {
-            Button { Task { await state.startRecording() } } label: {
-                HStack(spacing: 8) {
-                    Circle().fill(Color.red).frame(width: 8, height: 8)
-                    Text("녹음 시작").font(Brand.suit(11)).foregroundStyle(Brand.text)
-                    Spacer()
-                }
-                .frame(height: 50)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .overlay(alignment: .bottom) { hairline }
-        }
-    }
-
-    /// 받아쓰는 중 37% / 녹음을 정리하는 중
-    private func recordingWorkRow(_ work: RecordingPipeline.Step) -> some View {
-        HStack(spacing: 8) {
-            ProgressView().controlSize(.small)
-            Text(work.menuText).font(Brand.suit(11)).foregroundStyle(Brand.tabText)
-            Spacer()
-        }
-        .frame(height: 40)
-        .overlay(alignment: .bottom) { hairline }
-    }
-
-    /// 권한·받아쓰기 설정이 꺼져 있으면: 누르면 고칠 시스템 설정을 연다
-    private func recordingProblemRow(_ problem: RecordingProblem) -> some View {
-        Button { problem.openSettings() } label: {
-            HStack(spacing: 8) {
-                Image(systemName: "exclamationmark.circle").font(.system(size: 14)).foregroundStyle(Brand.ink)
-                Text(problem.text).font(Brand.suit(11)).foregroundStyle(Brand.tabText).lineLimit(2)
-                Spacer()
-                if problem.settingsURL != nil {
-                    Image(systemName: "arrow.up.right").font(.system(size: 10)).foregroundStyle(Brand.tabText)
-                }
-            }
-            .frame(minHeight: 45)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .overlay(alignment: .bottom) { hairline }
+        MenuBarRecordingSection(allowStart: true)
+            .overlay(alignment: .top) { if !state.taskList.isEmpty { hairline } }
     }
 
     /// [지금 정리] 와 일시정지·종료. 위의 녹음 줄이 아래 선을 긋는다
@@ -414,6 +352,91 @@ private struct MenuBarDashboard: View {
         let c = Calendar.current.dateComponents([.month, .day], from: date)
         return "\(c.month ?? 0)월 \(c.day ?? 0)일 \(time)"
     }
+}
+
+// MARK: 녹음 줄 (OUT-06, OUT-W7, OUT-W6, OUT-W2 공용)
+
+/// 녹음 줄: 문제 안내 → 정리 단계 → [● 녹음 시작] 또는 "● 녹음 중 12:31" [■ 끝내기].
+/// allowStart: 시작 버튼을 보일지. 준비 전(W2)에는 녹음 중일 때만 이 줄 전체를 그 자리에 넣고, 시작 버튼은 두지 않는다 (호출하는 쪽에서 false로 둔다)
+struct MenuBarRecordingSection: View {
+    @EnvironmentObject private var state: AppState
+    let allowStart: Bool
+
+    var body: some View {
+        VStack(spacing: 0) {
+            if allowStart, let problem = state.recordingProblem { recordingProblemRow(problem) }
+            if allowStart, let work = state.recordingWork { recordingWorkRow(work) }
+            if allowStart || state.activeRecording != nil { recordingRow }
+        }
+    }
+
+    @ViewBuilder private var recordingRow: some View {
+        if let active = state.activeRecording {
+            HStack(spacing: 8) {
+                Circle().fill(Color.red).frame(width: 8, height: 8)
+                TimelineView(.periodic(from: .now, by: 1)) { context in
+                    Text("녹음 중 \(RecordingText.clock(context.date.timeIntervalSince1970 - active.startedAt))")
+                        .font(Brand.suit(11)).foregroundStyle(Brand.text).monospacedDigit()
+                }
+                Spacer()
+                Button { Task { await state.stopRecording() } } label: {
+                    HStack(spacing: 6) {
+                        Rectangle().fill(Brand.ink).frame(width: 7, height: 7)
+                        Text("끝내기").font(Brand.suit(11, .medium)).foregroundStyle(Brand.ink)
+                    }
+                    .padding(.horizontal, 12).frame(height: 28)
+                    .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Brand.line))
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
+            .frame(height: 50)
+            .overlay(alignment: .bottom) { hairline }
+        } else if allowStart {
+            Button { Task { await state.startRecording() } } label: {
+                HStack(spacing: 8) {
+                    Circle().fill(Color.red).frame(width: 8, height: 8)
+                    Text("녹음 시작").font(Brand.suit(11)).foregroundStyle(Brand.text)
+                    Spacer()
+                }
+                .frame(height: 50)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .overlay(alignment: .bottom) { hairline }
+        }
+    }
+
+    /// 받아쓰는 중 37% / 녹음을 정리하는 중
+    private func recordingWorkRow(_ work: RecordingPipeline.Step) -> some View {
+        HStack(spacing: 8) {
+            ProgressView().controlSize(.small)
+            Text(work.menuText).font(Brand.suit(11)).foregroundStyle(Brand.tabText)
+            Spacer()
+        }
+        .frame(height: 40)
+        .overlay(alignment: .bottom) { hairline }
+    }
+
+    /// 권한·받아쓰기 설정이 꺼져 있으면: 누르면 고칠 시스템 설정을 연다
+    private func recordingProblemRow(_ problem: RecordingProblem) -> some View {
+        Button { problem.openSettings() } label: {
+            HStack(spacing: 8) {
+                Image(systemName: "exclamationmark.circle").font(.system(size: 14)).foregroundStyle(Brand.ink)
+                Text(problem.text).font(Brand.suit(11)).foregroundStyle(Brand.tabText).lineLimit(2)
+                Spacer()
+                if problem.settingsURL != nil {
+                    Image(systemName: "arrow.up.right").font(.system(size: 10)).foregroundStyle(Brand.tabText)
+                }
+            }
+            .frame(minHeight: 45)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .overlay(alignment: .bottom) { hairline }
+    }
+
+    private var hairline: some View { Rectangle().fill(Brand.hairline).frame(height: 1) }
 }
 
 extension RecordingPipeline.Step {
