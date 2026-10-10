@@ -96,6 +96,44 @@ final class RecordingLibraryTests: XCTestCase {
         XCTAssertFalse(text.contains("다시받아쓰기"), "받아쓰기에 성공한 녹음에는 다시 받아쓰기가 없다")
     }
 
+    // MARK: [녹음 삭제]
+
+    func testDeletingAReadyRecordingRemovesItsRowAndAudioButKeepsTheTextFile() throws {
+        let database = try WGDatabase.inMemory()
+        let audio = folder.appendingPathComponent("7.m4a")
+        try Data("a".utf8).write(to: audio)
+        let text = folder.appendingPathComponent("강의.md")
+        try Data("# 강의".utf8).write(to: text)
+        var stored = ready(textPath: text.path, audioPath: audio.path)
+        stored.id = nil
+        let saved = try RecordingStore(database).insert(stored)
+        let state = AppState(preview: { $0.phase = .ready }, database: database)
+        state.refreshRecordings()
+        XCTAssertEqual(state.recordings.map(\.id), [saved.id])
+
+        state.deleteRecording(saved)
+
+        XCTAssertTrue(state.recordings.isEmpty)
+        XCTAssertNil(try RecordingStore(database).find(id: saved.id!))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: audio.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: text.path), "받아쓴 글(.md)은 남는다")
+    }
+
+    func testDeletingARecordingThatIsStillTranscribingDoesNothing() throws {
+        let database = try WGDatabase.inMemory()
+        var stored = ready(textPath: nil)
+        stored.id = nil
+        stored.status = .transcribing
+        let saved = try RecordingStore(database).insert(stored)
+        let state = AppState(preview: { $0.phase = .ready }, database: database)
+        state.refreshRecordings()
+
+        state.deleteRecording(saved)
+
+        XCTAssertNotNil(try RecordingStore(database).find(id: saved.id!))
+        XCTAssertEqual(state.recordings.map(\.id), [saved.id])
+    }
+
     func testLibraryShowsRecordingsAmongItsItems() throws {
         let database = try WGDatabase.inMemory()
         var stored = ready(textPath: nil)

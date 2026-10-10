@@ -63,6 +63,22 @@ public struct RecordingStore: Sendable {
         _ = try db.writer.write { try Recording.deleteOne($0, key: id) }
     }
 
+    /// 보관함 [녹음 삭제]: 그래프의 recording:<id> 자료 노드와 그 모든 엣지, 그리고 이 행을 한 트랜잭션에서 지운 뒤
+    /// (FTS 삭제 트리거가 색인도 함께 지운다) 녹음 파일을 지운다. 받아쓴 글(text_path)은 사용자 파일이라 손대지 않는다
+    public func remove(id: Int64) throws {
+        let audioPath = try find(id: id)?.audioPath
+        try db.writer.write { conn in
+            if let nodeId = try GraphTx(conn).node(label: NodeLabel.resource, key: "recording:\(id)")?.id {
+                try conn.execute(sql: "DELETE FROM edges WHERE src = ? OR dst = ?", arguments: [nodeId, nodeId])
+                try conn.execute(sql: "DELETE FROM nodes WHERE id = ?", arguments: [nodeId])
+            }
+            _ = try Recording.deleteOne(conn, key: id)
+        }
+        if let audioPath, FileManager.default.fileExists(atPath: audioPath) {
+            try? FileManager.default.removeItem(atPath: audioPath)
+        }
+    }
+
     public func find(id: Int64) throws -> Recording? {
         try db.writer.read { try Recording.fetchOne($0, key: id) }
     }

@@ -152,6 +152,21 @@ extension AppState {
         refreshRecordings()
     }
 
+    /// 보관함 [녹음 삭제]: 정리가 끝났거나(ready) 실패한(failed) 녹음만, 녹음 중인 것은 지우지 않는다.
+    /// 받아쓴 글(.md)은 사용자 파일이라 남긴다. 그래프에서도 카드가 빠지게 graphVersion 을 올린다
+    func deleteRecording(_ recording: Recording) {
+        guard let id = recording.id, let db, id != activeRecording?.id else { return }
+        guard let current = try? RecordingStore(db).find(id: id), current.status == .ready || current.status == .failed else { return }
+        do {
+            try RecordingStore(db).remove(id: id)
+            AppLog.write("녹음 \(id) 지움")
+            refreshRecordings()
+            graphVersion += 1
+        } catch {
+            recordingProblem = .failed("녹음을 지우지 못했어요. \(error.localizedDescription)")
+        }
+    }
+
     /// 그래프 카드의 녹음 자료(recording:<id>) → 받아쓴 글 파일. 파일이 없으면 nil
     func recordingTextURL(key: String) -> URL? {
         guard key.hasPrefix("recording:"), let id = Int64(key.dropFirst("recording:".count)), let db,

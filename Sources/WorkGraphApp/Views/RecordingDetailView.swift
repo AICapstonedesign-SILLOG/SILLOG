@@ -85,6 +85,7 @@ struct RecordingDetailView: View {
     @EnvironmentObject private var state: AppState
     @Environment(\.dismiss) private var dismiss
     @StateObject private var player = RecordingPlayer()
+    @State private var showDelete = false
 
     private var textExists: Bool { recording.textPath.map { FileManager.default.fileExists(atPath: $0) } ?? false }
     private var audioExists: Bool { recording.audioDeletedAt == nil && FileManager.default.fileExists(atPath: recording.audioPath) }
@@ -127,6 +128,10 @@ struct RecordingDetailView: View {
                 Text(note).font(Brand.suit(11)).foregroundStyle(Brand.gray)
             }
             Spacer()
+            if recording.status == .ready || recording.status == .failed {
+                Button("녹음 삭제", role: .destructive) { showDelete = true }
+                    .buttonStyle(BrandButtonStyle())
+            }
             if recording.status == .failed, audioExists {
                 Button("다시 받아쓰기") {
                     Task { await state.retranscribe(recording) }
@@ -143,5 +148,12 @@ struct RecordingDetailView: View {
         .padding(.horizontal, 24).frame(height: 63)
         .brandGlass()
         .overlay(alignment: .top) { Rectangle().fill(Brand.hairline).frame(height: 1) }
+        .alert("녹음을 삭제할까요?", isPresented: $showDelete) {
+            Button("취소", role: .cancel) {}
+            Button("삭제", role: .destructive) {
+                state.deleteRecording(recording)
+                dismiss()
+            }
+        } message: { Text("앱 안의 기록과 녹음 파일을 지워요. 받아쓴 글 파일(.md)은 남아요.") }
     }
 }

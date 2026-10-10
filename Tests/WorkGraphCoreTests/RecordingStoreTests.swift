@@ -91,4 +91,35 @@ final class RecordingStoreTests: XCTestCase {
         XCTAssertNil(try store.find(textPath: "/Docs/Sillog 녹음/회의.md"))
         XCTAssertFalse(try store.moveText(from: "/없는/경로.md", to: "/x.md"))
     }
+
+    /// [녹음 삭제]: 행·색인·그래프 자료 노드와 그 엣지·녹음 파일을 지운다. 받아쓴 글(.md)은 사용자 파일이라 손대지 않는다
+    func testRemoveDeletesTheRowAudioAndGraphNodeButKeepsTheTextFile() throws {
+        let audio = try file("7.m4a")
+        let text = folder.appendingPathComponent("강의.md")
+        try Data("# 강의".utf8).write(to: text)
+        let recording = try store.insert(Recording(startedAt: 1, audioPath: audio, textPath: text.path, title: "자료구조 3주차",
+                                                    transcript: "연결리스트를 봅니다.", status: .ready, readyAt: 2))
+        let id = try XCTUnwrap(recording.id)
+        let (nodeId, sessionId) = try db.writer.write { conn -> (Int64, Int64) in
+            let tx = GraphTx(conn)
+            let session = try tx.upsertNode(label: NodeLabel.session, key: "s1", subtype: nil, title: "세션", props: [:], at: 1)
+            let node = try tx.upsertNode(label: NodeLabel.resource, key: "recording:\(id)", subtype: "Recording", title: "자료구조 3주차", props: [:], at: 1)
+            try tx.upsertEdge(src: session, dst: node, type: EdgeType.touched, props: [:], addWeight: 0, at: 1)
+            return (node, session)
+        }
+        XCTAssertEqual(try matches("연결리스트"), [id])
+
+        try store.remove(id: id)
+
+        XCTAssertNil(try store.find(id: id))
+        XCTAssertTrue(try matches("연결리스트").isEmpty)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: audio), "녹음 파일은 지운다")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: text.path), "받아쓴 글(.md)은 사용자 파일이라 남는다")
+        try db.writer.read { conn in
+            let tx = GraphTx(conn)
+            XCTAssertNil(try tx.node(id: nodeId))
+            XCTAssertTrue(try tx.edges(to: nodeId).isEmpty)
+            XCTAssertTrue(try tx.edges(from: sessionId).isEmpty, "세션 → 녹음 엣지도 함께 지워진다")
+        }
+    }
 }
