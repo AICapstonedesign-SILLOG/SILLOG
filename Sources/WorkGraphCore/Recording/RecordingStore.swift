@@ -41,7 +41,7 @@ public struct RecordingStore: Sendable {
                 CREATE TRIGGER recordings_ad AFTER DELETE ON recordings BEGIN
                   INSERT INTO recordings_fts(recordings_fts, rowid, title, summary, transcript) VALUES ('delete', old.id, old.title, old.summary, old.transcript);
                 END;
-                CREATE TRIGGER recordings_au AFTER UPDATE ON recordings BEGIN
+                CREATE TRIGGER recordings_au AFTER UPDATE OF title, summary, transcript ON recordings BEGIN
                   INSERT INTO recordings_fts(recordings_fts, rowid, title, summary, transcript) VALUES ('delete', old.id, old.title, old.summary, old.transcript);
                   INSERT INTO recordings_fts(rowid, title, summary, transcript) VALUES (new.id, new.title, new.summary, new.transcript);
                 END;

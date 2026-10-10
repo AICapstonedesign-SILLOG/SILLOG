@@ -71,8 +71,9 @@ struct SystemRecordingPermissions: RecordingPermissions {
         switch SFSpeechRecognizer.authorizationStatus() {
         case .authorized: return nil
         case .notDetermined:
+            // check() 는 MainActor 에서 돌지만, Speech 는 이 처리기를 배경 큐에서 부른다: 명시적으로 Sendable 로 표시한다
             let status = await withCheckedContinuation { continuation in
-                SFSpeechRecognizer.requestAuthorization { continuation.resume(returning: $0) }
+                SFSpeechRecognizer.requestAuthorization { @Sendable status in continuation.resume(returning: status) }
             }
             return status == .authorized ? nil : .speech
         default: return .speech
