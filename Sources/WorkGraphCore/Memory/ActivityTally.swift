@@ -56,6 +56,8 @@ public struct ActivityTally {
                                       by: { $0.batchId ?? -1 })
         let chats = Dictionary(grouping: try ChatMessage.fetchAll(conn, sql: "SELECT * FROM chat_messages WHERE batch_id IN (\(ids)) ORDER BY ts, id"),
                                by: { $0.batchId ?? -1 })
+        let recordings = Dictionary(grouping: try Recording.fetchAll(conn, sql: "SELECT * FROM recordings WHERE batch_id IN (\(ids)) ORDER BY started_at, id"),
+                                    by: { $0.batchId ?? -1 })
         var batches: [Int64: BatchRecord] = [:]
         if loadBatches {
             for batch in try BatchRecord.fetchAll(conn, sql: "SELECT * FROM batches WHERE id IN (\(ids))") {
@@ -66,24 +68,26 @@ public struct ActivityTally {
             guard let window = observations[item.span.id], let first = window.first else { return nil }
             let idle = try EventStore.idleSpans(conn, from: first.ts, to: item.end)
             let batchChats = chats[item.span.id] ?? []
+            let batchRecordings = recordings[item.span.id] ?? []
             let rows = EventCompressor.merge(
                 EventCompressor.compress(window, idle: idle, texts: [:], windowEnd: item.end, home: home, fileExists: fileExists,
                                          maxRows: config.maxRows, maxGap: config.maxGap, snippetChars: 0, snippetTopN: 0),
-                chats: batchChats, home: home, fileExists: fileExists, snippetChars: 0)
+                chats: batchChats, recordings: batchRecordings, home: home, fileExists: fileExists, snippetChars: 0)
             return Window(batchId: item.span.id, batch: batches[item.span.id], observations: window, idle: idle, windowEnd: item.end,
-                          assignments: Self.assign(rows, window: window, chats: batchChats),
+                          assignments: Self.assign(rows, window: window, chats: batchChats, recordings: batchRecordings),
                           intervals: Self.intervals(window, windowEnd: item.end, maxGap: config.maxGap))
         }
     }
 
-    /// 행마다 업무: 대화 행은 그 메시지의 업무, 나머지는 행을 이루는 관측들의 다수결. 하나라도 자료가 아니면 자료가 아니다
-    static func assign(_ rows: [ActivityRow], window: [Observation], chats: [ChatMessage]) -> [RowAssignment] {
+    /// 행마다 업무: 대화·녹음 행은 그 기록의 업무, 나머지는 행을 이루는 관측들의 다수결. 하나라도 자료가 아니면 자료가 아니다
+    static func assign(_ rows: [ActivityRow], window: [Observation], chats: [ChatMessage], recordings: [Recording] = []) -> [RowAssignment] {
         let taskOfObservation = Dictionary(window.compactMap { obs in obs.id.map { ($0, (obs.taskId, obs.resourceRelevant)) } }, uniquingKeysWith: { first, _ in first })
         let taskOfChat = Dictionary(chats.compactMap { chat in chat.id.map { ($0, chat.taskId) } }, uniquingKeysWith: { first, _ in first })
+        let taskOfRecording = Dictionary(recordings.compactMap { recording in recording.id.map { ($0, recording.taskId) } }, uniquingKeysWith: { first, _ in first })
         return rows.map { row in
             var taskId: Int64?, resource = true
             if row.isChat {
-                taskId = row.chatMessageIds.compactMap { taskOfChat[$0] ?? nil }.first
+                taskId = row.chatMessageIds.compactMap { taskOfChat[$0] ?? nil }.first ?? row.recordingIds.compactMap { taskOfRecording[$0] ?? nil }.first
             } else {
                 var votes: [Int64: Int] = [:]
                 for id in row.observationIds {

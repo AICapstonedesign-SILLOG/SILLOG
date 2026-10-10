@@ -102,6 +102,26 @@ final class RecordingBatchTests: XCTestCase {
         XCTAssertNil(reopened.taskId)
     }
 
+    func testRebuildingTheGraphFromAssignmentsKeepsTheRecording() async throws {
+        let db = try WGDatabase.inMemory()
+        let store = EventStore(db)
+        for (i, ts) in [100.0, 160, 400, 460].enumerated() {
+            try store.insert(Observation(ts: ts, trigger: "app_activate", appBundle: "b\(i % 2)", appName: "App\(i % 2)", windowTitle: "w\(i % 2)"))
+        }
+        let recording = try RecordingStore(db).insert(lecture(id: nil, start: 120, end: 380))
+        let llm = StubLLM([.success("""
+        {"tasks":[{"ref":"A","match":"new","title":"자료구조 공부","task_type":"강의수강"}],"rows":[{"rows":"1-5","task":"A"}],"work":[{"task":"A","summary":"s","topics":[]}]}
+        """)])
+        let batcher = OntologyBatcher(db: db, llm: llm, config: .singleCall, home: "/Users/me", fileExists: { _ in false }, clock: { 2_000 })
+        guard case .ok = await batcher.runIfDue(force: true) else { return XCTFail("배치가 성공해야 한다") }
+        _ = try GraphRebuilder(db: db, store: store, config: .singleCall, home: "/Users/me", fileExists: { _ in false }).rebuildFromAssignments(now: 3_000)
+        let key = "recording:\(recording.id!)"
+        let resource = try await db.writer.read { try GraphTx($0).node(label: NodeLabel.resource, key: key) }
+        let node = try XCTUnwrap(resource, "다시 만든 그래프에도 녹음 자료가 남아야 한다")
+        let touched = try await db.writer.read { try GraphTx($0).edges(to: node.id, type: "TOUCHED") }
+        XCTAssertEqual(touched.count, 1)
+    }
+
     func testBothJudgmentPromptsExplainRecordingRows() {
         let line = #"Rows whose app is "녹음" (type Recording, dwell 0)"#
         XCTAssertTrue(StagePrompt.classifySystem.contains(line))
