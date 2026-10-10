@@ -53,6 +53,7 @@ final class RecordingStoreTests: XCTestCase {
     func testUnprocessedIsReadyWithTextInsideTheWindowUntilMarked() throws {
         let ready = try store.insert(Recording(startedAt: 100, endedAt: 200, duration: 100, audioPath: "/a", transcript: "가나다", status: .ready, readyAt: 210))
         _ = try store.insert(Recording(startedAt: 100, endedAt: 200, duration: 100, audioPath: "/b", transcript: "  ", status: .ready, readyAt: 210))     // 받아쓴 글 없음
+        _ = try store.insert(Recording(startedAt: 100, endedAt: 200, duration: 100, audioPath: "/f", transcript: " \n\t ", status: .ready, readyAt: 210)) // 빈칸·줄바꿈·탭만 있음 (받아쓴 글 없음)
         _ = try store.insert(Recording(startedAt: 100, endedAt: 200, duration: 100, audioPath: "/c", transcript: "가나다", status: .transcribing))        // 아직 정리 중
         _ = try store.insert(Recording(startedAt: 900, endedAt: 1_000, duration: 100, audioPath: "/d", transcript: "가나다", status: .ready, readyAt: 1_010)) // 창보다 뒤
         _ = try store.insert(Recording(startedAt: 0, endedAt: 10, duration: 10, audioPath: "/e", transcript: "가나다", status: .ready, readyAt: 20))       // 너무 오래됨

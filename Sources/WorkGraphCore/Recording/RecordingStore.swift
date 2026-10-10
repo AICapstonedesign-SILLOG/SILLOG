@@ -5,6 +5,8 @@ import GRDB
 public struct RecordingStore: Sendable {
     /// 받아쓰기가 끝난 녹음 파일을 두는 기간 (일)
     public static let audioKeepDays: Double = 7
+    /// 받아쓴 글이 있는지 (SQL). Recording.hasTranscript 와 같은 기준: 빈칸·탭·줄바꿈만 있으면 없음
+    static let hasTranscriptSQL = "trim(transcript, ' ' || char(9) || char(10) || char(13)) != ''"
 
     let db: WGDatabase
     public init(_ db: WGDatabase) { self.db = db }
@@ -83,7 +85,7 @@ public struct RecordingStore: Sendable {
     public func unprocessed(upTo: Double, notOlderThan: Double) throws -> [Recording] {
         try db.writer.read { conn in
             try Recording.fetchAll(conn, sql: """
-                SELECT * FROM recordings WHERE status = 'ready' AND batch_id IS NULL AND trim(transcript) != ''
+                SELECT * FROM recordings WHERE status = 'ready' AND batch_id IS NULL AND \(Self.hasTranscriptSQL)
                   AND ended_at <= ? AND ended_at >= ? ORDER BY started_at, id
                 """, arguments: [upTo, notOlderThan])
         }
