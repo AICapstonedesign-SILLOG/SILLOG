@@ -188,7 +188,7 @@ private struct MenuSecondaryButton: View {
 
 // MARK: OUT-06
 
-/// 큰 숫자 두 개, 알림·파일 제안 줄, 최근 업무 3개, [지금 정리], 일시정지·종료 (흰색 94%, 폭 344, 안쪽 여백 23)
+/// 큰 숫자 두 개, 알림·파일 제안 줄, 최근 업무 3개, 녹음 줄, [지금 정리], 일시정지·앱 열기·종료 (흰색 94%, 폭 344, 안쪽 여백 23)
 private struct MenuBarDashboard: View {
     @EnvironmentObject private var state: AppState
     let status: String?
@@ -305,7 +305,7 @@ private struct MenuBarDashboard: View {
             .overlay(alignment: .top) { if !state.taskList.isEmpty { hairline } }
     }
 
-    /// [지금 정리] 와 일시정지·종료. 위의 녹음 줄이 아래 선을 긋는다
+    /// [지금 정리] 와 일시정지·앱 열기·종료. 위의 녹음 줄이 아래 선을 긋는다
     private var bottom: some View {
         VStack(spacing: 0) {
             Button { Task { await state.runBatch(force: true) } } label: {
@@ -322,6 +322,7 @@ private struct MenuBarDashboard: View {
             .disabled(state.batchRunning)
             HStack(spacing: 0) {
                 footerButton("pause", "일시정지") { state.togglePause() }
+                footerButton("macwindow", "앱 열기") { openMain() }
                 footerButton("rectangle.portrait.and.arrow.right", "종료") { NSApp.terminate(nil) }
             }
             .frame(height: 35)
