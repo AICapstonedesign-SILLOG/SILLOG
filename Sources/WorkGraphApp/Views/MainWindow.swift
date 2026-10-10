@@ -24,6 +24,7 @@ private struct BrandTabBar: View {
                 .buttonStyle(.plain)
             }
             Spacer(minLength: 12)
+            TabBarRecordingControl().padding(.trailing, 14)
             if state.batchRunning {
                 HStack(spacing: 8) {                          // OUT-W5: 정리하는 동안 오른쪽 위에 회전 표시
                     ProgressView().controlSize(.mini)
@@ -50,6 +51,72 @@ private struct BrandTabBar: View {
         .frame(height: 54)
         .brandGlass()
         .overlay(alignment: .bottom) { Rectangle().fill(Brand.hairline).frame(height: 1) }
+    }
+}
+
+/// 탭 막대의 녹음: 메뉴 막대 아이콘이 노치 뒤로 가려져도 창에서 녹음할 수 있게 [지금 정리] 옆에 둔다.
+/// 메뉴 막대 녹음 줄과 같은 상태를 보인다: 평소 [● 녹음 시작], 녹음 중 "● 녹음 중 12:31" [■ 끝내기], 정리 중 "받아쓰는 중 37%".
+/// 새 녹음은 로그인을 마친 뒤에만, 끝내기는 언제나
+private struct TabBarRecordingControl: View {
+    @EnvironmentObject private var state: AppState
+
+    var body: some View {
+        HStack(spacing: 10) {
+            if let problem = state.recordingProblem { problemButton(problem) }
+            if let active = state.activeRecording {
+                HStack(spacing: 6) {
+                    Circle().fill(Color.red).frame(width: 7, height: 7)
+                    TimelineView(.periodic(from: .now, by: 1)) { context in
+                        Text("녹음 중 \(RecordingText.clock(context.date.timeIntervalSince1970 - active.startedAt))")
+                            .font(Brand.suit(11)).foregroundStyle(Brand.tabText).monospacedDigit()
+                    }
+                }
+                Button { Task { await state.stopRecording() } } label: {
+                    HStack(spacing: 5) {
+                        Rectangle().fill(Brand.ink).frame(width: 7, height: 7)
+                        Text("끝내기").font(Brand.suit(11, .medium)).foregroundStyle(Brand.ink)
+                    }
+                    .padding(.horizontal, 10).frame(height: 26)
+                    .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Brand.line))
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            } else if state.phase == .ready {
+                if let work = state.recordingWork {
+                    HStack(spacing: 6) {
+                        ProgressView().controlSize(.mini)
+                        Text(work.menuText).font(Brand.suit(11)).foregroundStyle(Brand.tabText)
+                    }
+                }
+                Button { Task { await state.startRecording() } } label: {
+                    HStack(spacing: 6) {
+                        Circle().fill(Color.red).frame(width: 7, height: 7)
+                        Text("녹음 시작").font(Brand.suit(11))
+                    }
+                    .foregroundStyle(Brand.tabText)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help("마이크로 녹음하고, 끝내면 이 Mac 안에서 받아씁니다")
+            }
+        }
+    }
+
+    /// 권한·받아쓰기 설정이 꺼져 있으면: 넓으면 문구, 좁으면 아이콘. 누르면 고칠 시스템 설정을 연다
+    private func problemButton(_ problem: RecordingProblem) -> some View {
+        Button { problem.openSettings() } label: {
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 4) {
+                    Image(systemName: "exclamationmark.circle").font(.system(size: 11))
+                    Text(problem.text).font(Brand.suit(11)).lineLimit(1)
+                }
+                Image(systemName: "exclamationmark.circle").font(.system(size: 12))
+            }
+            .foregroundStyle(Brand.tabText)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(problem.text)
     }
 }
 

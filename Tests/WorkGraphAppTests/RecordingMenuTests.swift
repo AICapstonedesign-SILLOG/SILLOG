@@ -89,4 +89,35 @@ final class RecordingMenuTests: XCTestCase {
         let text = menuText { s in s.phase = .login }
         XCTAssertFalse(text.contains("녹음시작"), text)
     }
+
+    // 메뉴 막대 아이콘이 노치 뒤로 가려져도 창 탭 막대의 [지금 정리] 옆에서 녹음할 수 있다
+    private func windowText(_ configure: (AppState) -> Void) -> String {
+        let state = AppState(preview: { s in s.phase = .ready; s.selectedTab = .tasks; configure(s) })
+        let host = NSHostingView(rootView: AnyView(MainWindow().environmentObject(state)))
+        host.frame = NSRect(x: 0, y: 0, width: 1180, height: 716)
+        let window = NSWindow(contentRect: host.frame, styleMask: [.titled], backing: .buffered, defer: false)
+        window.contentView = host
+        for _ in 0..<8 { host.layoutSubtreeIfNeeded(); RunLoop.main.run(until: Date().addingTimeInterval(0.05)) }
+        return OnboardingOverlayTests.recognizedText(host).filter { !$0.isWhitespace }
+    }
+
+    func testTheWindowTabBarHasARecordButtonNextToTidyNow() {
+        let text = windowText { _ in }
+        XCTAssertTrue(text.contains("녹음시작"), text)
+        XCTAssertTrue(text.contains("지금정리"), text)
+    }
+
+    func testTheWindowTabBarShowsTheElapsedTimeAndStopWhileRecording() {
+        let text = windowText { s in s.activeRecording = ActiveRecording(id: 1, startedAt: Date().timeIntervalSince1970 - 751) }
+        XCTAssertTrue(text.contains("녹음중12:3"), text)                       // 12:31 (그리는 사이 1초가 지날 수 있다)
+        XCTAssertTrue(text.contains("끝내"), text)                             // 테두리 옆 '기'를 '?'로 읽기도 한다. 창에서 '끝내'는 이 버튼뿐
+
+        XCTAssertFalse(text.contains("녹음시작"), text)
+    }
+
+    func testTheWindowTabBarShowsTranscribingProgress() {
+        let text = windowText { s in s.recordingWork = .transcribing(0.37) }
+        XCTAssertTrue(text.contains("받아쓰는중37%"), text)
+        XCTAssertTrue(text.contains("녹음시작"), "받아쓰는 동안에도 새로 녹음할 수 있다")
+    }
 }
