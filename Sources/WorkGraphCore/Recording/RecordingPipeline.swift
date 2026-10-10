@@ -25,6 +25,13 @@ public enum TranscriptionError: Error, Equatable, Sendable {
         case .failed(let reason): "받아쓰지 못했어요: \(reason)"
         }
     }
+
+    /// 저장해 둔 실패 이유(message)로 되살린다: 받아쓰기 꺼짐·권한 없음은 그 경우로, 그 밖은 문구 그대로 (.unavailable 은 message 가 이유 그대로다)
+    public static func restored(from message: String?) -> TranscriptionError {
+        if message == TranscriptionError.dictationDisabled.message { return .dictationDisabled }
+        if message == TranscriptionError.speechDenied.message { return .speechDenied }
+        return .unavailable(message ?? "받아쓰지 못했어요.")
+    }
 }
 
 /// 녹음 정리: 받아쓰기 → 제목·요약 → 받아쓴 글 .md → 폴더 추천 → ready.
@@ -82,7 +89,7 @@ public struct RecordingPipeline: Sendable {
         switch recording.status {
         case .transcribing: break
         case .ready: return recording.hasTranscript ? .ready(recording) : .empty(recording)
-        case .failed: return .failed(recording, .failed(recording.error ?? ""))
+        case .failed: return .failed(recording, .restored(from: recording.error))
         case .recording: throw CocoaError(.fileReadUnknown)               // 아직 녹음 중
         }
 

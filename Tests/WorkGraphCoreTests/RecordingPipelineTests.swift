@@ -165,4 +165,18 @@ final class RecordingPipelineTests: XCTestCase {
         XCTAssertEqual(outcome, .ready(ready))
         XCTAssertEqual(try RecordingStore(db).find(id: ready.id!)?.readyAt, 100)
     }
+
+    func testProcessingAFailedRecordingReturnsItsStoredReasonUnchanged() async throws {
+        let store = RecordingStore(db)
+        let dictation = try store.insert(Recording(startedAt: start, endedAt: start + 60, duration: 60, audioPath: "/a.m4a",
+                                                   status: .failed, error: TranscriptionError.dictationDisabled.message))
+        let other = try store.insert(Recording(startedAt: start, endedAt: start + 60, duration: 60, audioPath: "/b.m4a",
+                                               status: .failed, error: "인식기를 쓸 수 없어요"))
+        let runner = pipeline(FakeTranscriber([]), StubLLM([]))
+        let first = try await runner.process(id: dictation.id!)
+        guard case .failed(_, .dictationDisabled) = first else { return XCTFail("\(first)") }
+        let second = try await runner.process(id: other.id!)
+        guard case .failed(_, let error) = second else { return XCTFail("\(second)") }
+        XCTAssertEqual(error.message, "인식기를 쓸 수 없어요", "저장된 이유를 다시 감싸지 않는다")
+    }
 }
