@@ -62,6 +62,11 @@ final class AppState: ObservableObject {
     @Published var pruneConsented = false
     /// 원문(화면 텍스트)이 남아 있는 첫 날. 정리한 적이 없으면 nil
     @Published var rawRecordsSince: String?
+    // 녹음 (AppState+Recording)
+    @Published var activeRecording: ActiveRecording?
+    @Published var recordingWork: RecordingPipeline.Step?
+    @Published var recordingProblem: RecordingProblem?
+    @Published var recordings: [Recording] = []
 
     let databasePath = WGDatabase.defaultPath()
     private(set) var db: WGDatabase?
@@ -74,6 +79,11 @@ final class AppState: ObservableObject {
     var folderIndex: FolderIndex?
     var folderIndexAt = 0.0
     var folderIndexTask: Task<FolderIndex, Never>?
+    var recordingPipeline: RecordingPipeline?
+    var recorder: any AudioRecording = VoiceRecorder()
+    var recordingPermissions: any RecordingPermissions = SystemRecordingPermissions()
+    var recordingQueue: Task<Void, Never>?
+    var recordingStepToken = 0
     let notifier = SuggestionNotifier()
     private var tasks: [Task<Void, Never>] = []
     private let codexAuth = CodexAuthManager()
@@ -123,6 +133,11 @@ final class AppState: ObservableObject {
                 if await batcher.assignThemes() != nil { self?.graphVersion += 1 }
             }
             self.suggester = FolderSuggester(db: database, llm: makeQuickClient())
+            self.recordingPipeline = makeRecordingPipeline(database)
+            // 녹음 중에 앱을 끝내면 파일을 닫아 둔다 (다음 실행 때 받아쓰기부터 이어 간다)
+            _ = NotificationCenter.default.addObserver(forName: NSApplication.willTerminateNotification, object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.finishRecordingOnQuit() }
+            }
             notifier.onAction = { [weak self] action, id in Task { @MainActor in self?.handleNotificationAction(action, id: id) } }
             notifier.onDenied = { [weak self] denied in Task { @MainActor in self?.notificationsDenied = denied } }
         } catch {
@@ -249,6 +264,13 @@ final class AppState: ObservableObject {
                 await self?.consolidateIfDue()
             }
         })
+        tasks.append(Task { [weak self] in                 // 녹음: 꺼지기 전에 못 끝낸 것을 이어서 정리하고, 7일 지난 녹음 파일을 지운다 (켤 때와 하루 한 번)
+            await self?.resumeRecordings()
+            while !Task.isCancelled {
+                self?.deleteExpiredRecordingAudio()
+                try? await Task.sleep(nanoseconds: 86_400_000_000_000)
+            }
+        })
     }
 
     private func makeOpenAIClient() -> OpenAICompatClient {
@@ -264,6 +286,12 @@ final class AppState: ObservableObject {
     /// 파일 정리 제안용: 알림이 바로 떠야 하므로 low
     private func makeQuickClient() -> any LLMClient {
         settings.llmProvider == "openai" ? makeOpenAIClient() : CodexResponsesClient(auth: codexAuth, model: settings.codexModel, reasoningEffort: "low")
+    }
+
+    /// 녹음 정리: 기기 안 받아쓰기, 제목은 빠른 모델, 받아쓴 글은 ~/Documents/Sillog 녹음
+    private func makeRecordingPipeline(_ database: WGDatabase) -> RecordingPipeline {
+        RecordingPipeline(db: database, transcriber: SpeechTranscriber(), llm: makeQuickClient(),
+                          textFolder: RecordingPipeline.defaultTextFolder(home: NSHomeDirectory()))
     }
 
     /// Args: 없음.
@@ -514,7 +542,10 @@ final class AppState: ObservableObject {
         let collectorSettings = settings.collector
         let client = makeClient()
         let cardsOn = settings.screenCards && settings.captureScreenshots
-        if let db { suggester = FolderSuggester(db: db, llm: makeQuickClient()) }
+        if let db {
+            suggester = FolderSuggester(db: db, llm: makeQuickClient())
+            recordingPipeline = makeRecordingPipeline(db)
+        }
         folderIndex = nil                                   // 검색 폴더가 바뀌었을 수 있으니 다음 제안 때 다시 색인
         Task { [coordinator, batcher, consolidator] in
             await coordinator?.update(settings: collectorSettings)
