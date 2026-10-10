@@ -299,7 +299,7 @@ public struct Pruner {
         } else {
             try db.writer.writeWithoutTransaction { try $0.execute(sql: "PRAGMA incremental_vacuum") }
         }
-        for index in ["text_snapshots_chat_fts", "nodes_chat_fts", "chat_messages_chat_fts", "screen_cards_fts", "app_messages_fts", "digests_fts"] {
+        for index in ["text_snapshots_chat_fts", "nodes_chat_fts", "chat_messages_chat_fts", "screen_cards_fts", "app_messages_fts", "digests_fts", "recordings_fts"] {
             try db.writer.write { try $0.execute(sql: "INSERT INTO \(index)(\(index)) VALUES ('optimize')") }
         }
         if db.path != nil {

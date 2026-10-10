@@ -4,7 +4,7 @@ import GRDB
 /// 저장 공간: 범주별 크기와 최근 30일 하루 평균 증가량
 public struct StorageUsage: Equatable, Sendable {
     public enum Category: String, CaseIterable, Sendable {
-        case screenshots, screenText, batchLog, observations, screenCards, aiRequests, digests, graph, chatLibrary, other
+        case screenshots, screenText, batchLog, observations, screenCards, aiRequests, digests, graph, chatLibrary, recordings, other
 
         public var title: String {
             switch self {
@@ -17,6 +17,7 @@ public struct StorageUsage: Equatable, Sendable {
             case .digests: "요약·사용 시간 기록"
             case .graph: "업무 그래프"
             case .chatLibrary: "채팅·보관함"
+            case .recordings: "녹음"
             case .other: "기타"
             }
         }
@@ -50,6 +51,7 @@ public struct StorageUsage: Equatable, Sendable {
             ("nodes", .graph), ("idx_nodes", .graph), ("sqlite_autoindex_nodes", .graph), ("edges", .graph), ("idx_edges", .graph), ("sqlite_autoindex_edges", .graph),
             ("app_", .chatLibrary), ("idx_app_", .chatLibrary), ("sqlite_autoindex_app_", .chatLibrary), ("library_", .chatLibrary),
             ("sqlite_autoindex_library_", .chatLibrary), ("project_", .chatLibrary), ("sqlite_autoindex_project_", .chatLibrary),
+            ("recordings", .recordings), ("idx_recordings", .recordings),
         ]
         return prefixes.first { name.hasPrefix($0.0) }?.1 ?? .other
     }
@@ -72,6 +74,7 @@ public struct StorageUsage: Equatable, Sendable {
             usage.dailyGrowth = try growth(conn, bytes: usage.bytes, since: now - 30 * 86_400)
         }
         usage.bytes[.chatLibrary, default: 0] += folderBytes(db.libraryDirectory)
+        usage.bytes[.recordings, default: 0] += folderBytes(db.recordingsDirectory)
         if let capturesDir { usage.bytes[.screenshots] = folderBytes(capturesDir) }
         if let path = db.path {
             usage.databaseFileBytes = [path, path + "-wal"].reduce(Int64(0)) { total, file in

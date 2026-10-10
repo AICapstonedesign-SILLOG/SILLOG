@@ -11,6 +11,11 @@ public final class WGDatabase: @unchecked Sendable {
         path.map { URL(fileURLWithPath: $0).deletingLastPathComponent().appendingPathComponent("library", isDirectory: true) }
             ?? FileManager.default.temporaryDirectory.appendingPathComponent("Sillog-library-\(memoryLibraryID)", isDirectory: true)
     }
+    /// 녹음 파일 폴더 (받아쓰기가 끝나고 7일 뒤 지운다). 메모리 DB 는 임시 폴더
+    public var recordingsDirectory: URL {
+        path.map { URL(fileURLWithPath: $0).deletingLastPathComponent().appendingPathComponent("recordings", isDirectory: true) }
+            ?? FileManager.default.temporaryDirectory.appendingPathComponent("Sillog-recordings-\(memoryLibraryID)", isDirectory: true)
+    }
 
     public init(path: String) throws {
         let dir = (path as NSString).deletingLastPathComponent
@@ -299,6 +304,7 @@ public final class WGDatabase: @unchecked Sendable {
         LibraryStore.migrate(&migrator)
         ContextSearch.migrate(&migrator)
         ConsolidationStore.migrate(&migrator)
+        RecordingStore.migrate(&migrator)
         return migrator
     }
 }
