@@ -96,6 +96,7 @@ extension AppState {
         do {
             let target = try suggester.accept(id: id, now: Date().timeIntervalSince1970)
             AppLog.write("파일 옮김: \(suggestion.fileName) → \(target)")
+            recordingTextMoved(from: suggestion.path, to: target)
         } catch {
             AppLog.write("파일 옮기기 실패: \(error.localizedDescription)")
             fileError = "옮기지 못했습니다. \(error.localizedDescription)"
@@ -119,6 +120,7 @@ extension AppState {
         do {
             let target = try suggester.rejectAndMove(id: id, to: folder, now: Date().timeIntervalSince1970)
             AppLog.write("파일 옮김(직접 선택): \(suggestion.fileName) → \(target)")
+            recordingTextMoved(from: suggestion.path, to: target)
         } catch {
             fileError = "옮기지 못했습니다. \(error.localizedDescription)"
         }
@@ -138,6 +140,7 @@ extension AppState {
         do {
             let restored = try suggester.undo(id: id, now: Date().timeIntervalSince1970)
             AppLog.write("파일 되돌림: \(restored)")
+            recordingTextMoved(from: suggestion.movedTo, to: restored)
         } catch {
             fileError = "되돌리지 못했습니다. \(error.localizedDescription)"
         }
