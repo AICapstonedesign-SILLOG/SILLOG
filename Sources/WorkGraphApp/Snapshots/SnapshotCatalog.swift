@@ -5,7 +5,7 @@ import WorkGraphCore
 /// 스냅샷으로 그릴 화면 목록. 이름은 Figma 화면 번호를 따른다 (Figma 에서 내보낸 같은 이름의 PNG 와 나란히 본다)
 @MainActor
 enum SnapshotCatalog {
-    static var all: [Snapshot] { menus + windows + activity + chat + storage + [mathAnswer] }
+    static var all: [Snapshot] { menus + windows + activity + chat + storage + [mathAnswer] + recording }
 
     /// Figma 창(760) 에서 제목 줄(44)을 뺀 내용 영역
     static let window = CGSize(width: 1180, height: 716)
@@ -32,6 +32,24 @@ enum SnapshotCatalog {
                 s.todayCount = 1234; s.pendingCount = 0
                 s.taskList = [TaskSummary(id: 9, key: "long", title: "아주 긴 업무 이름이 메뉴 폭을 넘어가면 한 줄로 잘려야 하는지 보는 업무",
                                           taskType: nil, activeSeconds: 60, lastActive: todayAt(9, 5), sessionCount: 1)]
+            },
+        ]
+    }
+
+    /// 녹음: 메뉴 막대(녹음 중, 받아쓰는 중, 마이크 권한 꺼짐)
+    static var recording: [Snapshot] {
+        [
+            shot("REC-01", MenuBarView()) { s in
+                s.phase = .ready; s.status = collector(); s.todayCount = 62; s.pendingCount = 6; s.taskList = recentTasks
+                s.activeRecording = ActiveRecording(id: 1, startedAt: Date().timeIntervalSince1970 - 751)
+            },
+            shot("REC-02", MenuBarView()) { s in
+                s.phase = .ready; s.status = collector(); s.todayCount = 62; s.pendingCount = 6; s.taskList = recentTasks
+                s.recordingWork = .transcribing(0.37)
+            },
+            shot("REC-03", MenuBarView()) { s in
+                s.phase = .ready; s.status = collector(); s.todayCount = 62; s.pendingCount = 6
+                s.recordingProblem = .microphone
             },
         ]
     }

@@ -25,7 +25,7 @@ struct WorkGraphApp: App {
         MenuBarExtra {
             MenuBarView().environmentObject(state)
         } label: {
-            MenuBarLabel(paused: state.status.paused).environmentObject(state)
+            MenuBarLabel(paused: state.status.paused, recording: state.activeRecording != nil).environmentObject(state)
         }
         .menuBarExtraStyle(.window)
 
@@ -64,11 +64,12 @@ final class WindowOpener {
 /// 메뉴바 아이콘. 메뉴바가 붐비면 노치 뒤로 가려질 수 있으므로 앱을 찾는 주 경로는 Dock 아이콘이다.
 struct MenuBarLabel: View {
     let paused: Bool
+    var recording = false
     @EnvironmentObject private var state: AppState
     @Environment(\.openWindow) private var openWindow
 
     var body: some View {
-        Image(systemName: paused ? "pause.fill" : "point.3.connected.trianglepath.dotted")
+        Image(nsImage: Self.icon(paused: paused, recording: recording))
             .task {
                 WindowOpener.shared.open = { openWindow(id: "main") }
                 await state.bootstrap()
@@ -76,6 +77,22 @@ struct MenuBarLabel: View {
                 guard state.phase != .ready || Launch.isFirst || !Launch.asLoginItem else { return }
                 WindowOpener.shared.openMain()
             }
+    }
+
+    /// 평소·일시정지는 메뉴 막대 색을 따르는 템플릿 아이콘, 녹음 중은 빨간 점 (색을 그대로 그린다)
+    static func icon(paused: Bool, recording: Bool) -> NSImage {
+        if recording {
+            let red = NSImage.SymbolConfiguration(paletteColors: [.systemRed])
+            let config = NSImage.SymbolConfiguration(pointSize: 13, weight: .regular).applying(red)
+            let image = NSImage(systemSymbolName: "record.circle.fill", accessibilityDescription: "녹음 중")?.withSymbolConfiguration(config) ?? NSImage()
+            image.isTemplate = false
+            image.accessibilityDescription = "녹음 중"
+            return image
+        }
+        let name = paused ? "pause.fill" : "point.3.connected.trianglepath.dotted"
+        let image = NSImage(systemSymbolName: name, accessibilityDescription: "Sillog") ?? NSImage()
+        image.isTemplate = true
+        return image
     }
 }
 
