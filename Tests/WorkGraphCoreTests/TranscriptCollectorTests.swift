@@ -76,4 +76,18 @@ final class TranscriptCollectorTests: XCTestCase {
         collector.add(text: "나.", utteranceEnded: true, isFinal: false, lastWordEnd: 0)
         XCTAssertEqual(collector.finish(), ["가.", "나."])
     }
+
+    func testDistinctUtterancesEndingCloseTogetherAreBothKept() {
+        var collector = TranscriptCollector(duration: 100)
+        collector.add(text: "하나.", utteranceEnded: true, isFinal: false, lastWordEnd: 10.0)
+        collector.add(text: "둘.", utteranceEnded: true, isFinal: false, lastWordEnd: 10.2)
+        XCTAssertEqual(collector.finish(), ["하나.", "둘."])
+    }
+
+    func testADistinctTrailingPartialIsKeptEvenRightAfterTheLastUtterance() {
+        var collector = TranscriptCollector(duration: 100)
+        collector.add(text: "첫 문장.", utteranceEnded: true, isFinal: false, lastWordEnd: 10.0)
+        collector.add(text: "둘째 문장", utteranceEnded: false, isFinal: false, lastWordEnd: 10.2)
+        XCTAssertEqual(collector.finish(), ["첫 문장.", "둘째 문장"])
+    }
 }
