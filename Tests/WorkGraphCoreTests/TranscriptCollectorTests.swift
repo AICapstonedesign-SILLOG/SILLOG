@@ -53,4 +53,27 @@ final class TranscriptCollectorTests: XCTestCase {
         collector.add(text: "  ", utteranceEnded: true, isFinal: false, lastWordEnd: 1)
         XCTAssertEqual(collector.finish(), [])
     }
+
+    func testARepeatedUtteranceAtALaterTimeIsKept() {
+        var collector = TranscriptCollector(duration: 100)
+        collector.add(text: "네.", utteranceEnded: true, isFinal: false, lastWordEnd: 10)
+        collector.add(text: "네.", utteranceEnded: false, isFinal: true, lastWordEnd: 30)
+        XCTAssertEqual(collector.finish(), ["네.", "네."])
+    }
+
+    func testAFinalThatRepunctuatesTheLastUtteranceReplacesIt() {
+        var collector = TranscriptCollector(duration: 100)
+        collector.add(text: "오늘은 연결 리스트를 봅니다.", utteranceEnded: true, isFinal: false, lastWordEnd: 5)
+        collector.add(text: "노드는 값을 가집니다", utteranceEnded: true, isFinal: false, lastWordEnd: 20)
+        collector.add(text: "노드는 값을 가집니다.", utteranceEnded: false, isFinal: true, lastWordEnd: 20)
+        XCTAssertEqual(collector.finish(), ["오늘은 연결 리스트를 봅니다.", "노드는 값을 가집니다."])
+    }
+
+    func testWithoutWordTimesOnlyIdenticalTextCountsAsResent() {
+        var collector = TranscriptCollector(duration: 0)
+        collector.add(text: "가.", utteranceEnded: true, isFinal: false, lastWordEnd: 0)
+        collector.add(text: "가.", utteranceEnded: false, isFinal: true, lastWordEnd: 0)
+        collector.add(text: "나.", utteranceEnded: true, isFinal: false, lastWordEnd: 0)
+        XCTAssertEqual(collector.finish(), ["가.", "나."])
+    }
 }
