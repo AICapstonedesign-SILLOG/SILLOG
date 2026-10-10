@@ -497,6 +497,7 @@ do {
             // 카드 연결(card_id)은 남긴다: 화면 카드는 판정과 무관한 사실이라 다시 만들 필요가 없다
             try conn.execute(sql: "UPDATE observations SET batch_id = NULL, task_id = NULL, resource_relevant = 1, off_task = 0, task_reason = NULL")
             try conn.execute(sql: "UPDATE chat_messages SET batch_id = NULL, task_id = NULL")
+            try conn.execute(sql: "UPDATE recordings SET batch_id = NULL, task_id = NULL")
             try conn.execute(sql: "DELETE FROM edges")
             try conn.execute(sql: "DELETE FROM nodes")
             try TBox.seed(GraphTx(conn), at: Date().timeIntervalSince1970)

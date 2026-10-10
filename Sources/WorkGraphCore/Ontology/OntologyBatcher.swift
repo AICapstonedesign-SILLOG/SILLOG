@@ -103,7 +103,9 @@ public actor OntologyBatcher {
         guard !compressed.isEmpty, !includedIds.isEmpty else { return .skipped("압축 결과 없음") }
         // 창 안의 대화 + 아직 어느 배치에도 안 들어간 지난 대화(늦게 읽혔거나 앱이 꺼져 있던 동안 것)
         let chats = (try? store.unprocessedChatMessages(upTo: windowEnd, notOlderThan: first.ts - 24 * 3600)) ?? []
-        let rows = EventCompressor.merge(compressed, chats: chats, home: home, fileExists: fileExists, snippetChars: config.snippetChars)
+        // 창 끝까지 끝난 받아쓴 녹음 (24시간 이내, 아직 어느 배치에도 안 들어간 것)
+        let recordings = (try? RecordingStore(db).unprocessed(upTo: windowEnd, notOlderThan: first.ts - 24 * 3600)) ?? []
+        let rows = EventCompressor.merge(compressed, chats: chats, recordings: recordings, home: home, fileExists: fileExists, snippetChars: config.snippetChars)
 
         // 최근 7일의 업무 전부 (최대 40개): 행이 어느 목표에 기여하는지 보려면 목표 목록이 다 있어야 한다
         let openTasks = try await db.writer.read { try GraphTx($0).openTasks(limit: 40, since: now - 7 * 86_400) }
@@ -151,9 +153,11 @@ public actor OntologyBatcher {
                 let batchId = record.id ?? conn.lastInsertedRowID
                 try EventStore.mark(conn, observationIds: includedIds, batchId: batchId)
                 try EventStore.markChats(conn, ids: rows.flatMap(\.chatMessageIds), batchId: batchId)
+                try RecordingStore.mark(conn, ids: rows.flatMap(\.recordingIds), batchId: batchId)
                 for item in assignments {
                     try EventStore.assign(conn, observationIds: item.row.observationIds, taskId: item.taskId, relevant: item.resource, offTask: item.offTask, reason: item.reason)
                     try EventStore.assignChats(conn, ids: item.row.chatMessageIds, taskId: item.taskId)
+                    try RecordingStore.assign(conn, ids: item.row.recordingIds, taskId: item.taskId)
                 }
                 return stats
             }

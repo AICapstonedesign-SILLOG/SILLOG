@@ -15,16 +15,20 @@ public struct ActivityRow: Codable, Equatable, Sendable {
     public var projectTitle: String?
     public var snippet: String?
     public var observationIds: [Int64]
-    /// AI 도구와의 대화에서 만든 행인지 (체류시간 없음, 시간 집계에 들어가지 않음)
+    /// 창 기록이 아닌 행인지: AI 도구와의 대화 또는 녹음 (체류시간 없음, 시간 집계·앱 노드·화면 카드에 들어가지 않음)
     public var isChat: Bool = false
     /// 이 행에 들어간 대화 메시지 id (처리 완료 표시용)
     public var chatMessageIds: [Int64] = []
+    /// 이 행에 들어간 녹음 id (처리 완료 표시용)
+    public var recordingIds: [Int64] = []
 
     public init(row: Int, start: Double, end: Double, dwell: Int, app: String, appBundle: String, title: String?, uri: String?, type: String?,
-                projectKey: String?, projectTitle: String?, snippet: String?, observationIds: [Int64], isChat: Bool = false, chatMessageIds: [Int64] = []) {
+                projectKey: String?, projectTitle: String?, snippet: String?, observationIds: [Int64], isChat: Bool = false, chatMessageIds: [Int64] = [],
+                recordingIds: [Int64] = []) {
         self.row = row; self.start = start; self.end = end; self.dwell = dwell; self.app = app; self.appBundle = appBundle
         self.title = title; self.uri = uri; self.type = type; self.projectKey = projectKey; self.projectTitle = projectTitle
         self.snippet = snippet; self.observationIds = observationIds; self.isChat = isChat; self.chatMessageIds = chatMessageIds
+        self.recordingIds = recordingIds
     }
 }
 
@@ -90,14 +94,17 @@ public enum EventCompressor {
         return rows
     }
 
-    /// AI 대화를 행으로 끼워 넣는다. 같은 세션의 메시지는 한 행. 체류시간은 0 이라 앱 시간 집계를 건드리지 않는다.
+    /// AI 대화와 받아쓴 녹음을 행으로 끼워 넣는다. 같은 세션의 메시지는 한 행, 녹음은 한 건에 한 행.
+    /// 체류시간은 0 이라 앱 시간 집계를 건드리지 않는다 (녹음은 창 기록과 겹친다). 창보다 오래된 것은 창 시작 시각에 놓는다.
     /// 사용자가 AI 에게 한 말은 업무 의도를 그대로 담고 있어서 LLM 이 업무 제목·주제를 잡는 데 가장 강한 단서다.
-    public static func merge(_ rows: [ActivityRow], chats: [ChatMessage], home: String, fileExists: (String) -> Bool,
+    public static func merge(_ rows: [ActivityRow], chats: [ChatMessage], recordings: [Recording] = [], home: String, fileExists: (String) -> Bool,
                              snippetChars: Int) -> [ActivityRow] {
-        guard !chats.isEmpty else { return rows }
+        guard !chats.isEmpty || !recordings.isEmpty else { return rows }
         // 늦게 읽힌 메시지(창보다 오래된 것)는 창 시작 시각에 놓는다. 세션 시작이 과거로 밀리는 것을 막는다.
-        let windowStart = rows.map(\.start).min() ?? chats.map(\.ts).min() ?? 0
-        let windowEnd = rows.map(\.end).max() ?? chats.map(\.ts).max() ?? windowStart
+        let extraStarts: [Double] = chats.map(\.ts) + recordings.map(\.startedAt)
+        let extraEnds: [Double] = chats.map(\.ts) + recordings.map { $0.endedAt ?? $0.startedAt }
+        let windowStart = rows.map(\.start).min() ?? extraStarts.min() ?? 0
+        let windowEnd = rows.map(\.end).max() ?? extraEnds.max() ?? windowStart
         func clamp(_ ts: Double) -> Double { min(max(ts, windowStart), windowEnd) }
         var sessions: [String: [ChatMessage]] = [:]
         var order: [String] = []
@@ -128,7 +135,21 @@ public enum EventCompressor {
                                chatMessageIds: messages.compactMap(\.id))
         }
         chatRows.removeAll { $0.snippet?.isEmpty ?? true }
-        var merged = rows + chatRows
+        // 녹음: 받아쓴 글이 있는 것만. 요약 + 받아쓴 글 앞부분을 text: 로
+        let recordingRows: [ActivityRow] = recordings.compactMap { recording in
+            guard let id = recording.id, recording.hasTranscript else { return nil }
+            let excerpt = makeSnippet(recording.transcript, limit: snippetChars * 2)
+            var parts: [String] = []
+            if let summary = recording.summary, !summary.isEmpty { parts.append("요약: " + makeSnippet(summary, limit: 200)) }
+            if !excerpt.isEmpty { parts.append("「\(excerpt)」") }
+            let start = clamp(recording.startedAt)
+            let end = max(clamp(recording.endedAt ?? recording.startedAt), start)
+            return ActivityRow(row: 0, start: start, end: end, dwell: 0, app: "녹음", appBundle: "sillog.recording",
+                               title: recording.title ?? "녹음", uri: "recording:\(id)", type: "Recording",
+                               projectKey: nil, projectTitle: nil, snippet: parts.joined(separator: " "), observationIds: [],
+                               isChat: true, recordingIds: [id])
+        }
+        var merged = rows + chatRows + recordingRows
         merged.sort { ($0.start, $0.isChat ? 1 : 0) < ($1.start, $1.isChat ? 1 : 0) }
         for index in merged.indices { merged[index].row = index + 1 }
         return merged
