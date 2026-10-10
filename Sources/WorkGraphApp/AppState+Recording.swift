@@ -12,6 +12,12 @@ struct ActiveRecording: Equatable {
 /// 받아쓰는 동안에도 새로 녹음할 수 있고, 정리는 하나씩 차례로 한다 (기기 안 인식기를 하나만 쓴다)
 extension AppState {
     static let crashedRecordingMessage = "녹음 중 앱이 꺼져 녹음 파일을 읽을 수 없어요"
+    /// 녹음기가 (인코딩 오류·입력 장치 끊김·디스크 가득 참으로) 스스로 멈춰 currentTime 이 0 이고, 파일에서도 길이를 잴 수 없을 때
+    static let stoppedRecordingMessage = "녹음이 중간에 멈춰 녹음된 소리를 찾지 못했어요"
+
+    /// 녹음기가 돌려준 길이(stopped)와 파일에서 다시 잰 길이(file) 중 더 믿을 만한 값.
+    /// AVAudioRecorder 가 스스로 멈추면(인코딩 오류 등) currentTime 이 0 인데, 파일에는 소리가 남아 있을 수 있다
+    static func recordedDuration(stopped: Double, file: Double?) -> Double { max(stopped, file ?? 0) }
 
     func refreshRecordings() {
         guard let db else { return }
@@ -161,16 +167,23 @@ extension AppState {
 
     // MARK: 안쪽
 
-    /// 녹음기를 멈추고 기록을 '받아쓰는 중'으로 바꾼다. 닫은 녹음 id
+    /// 녹음기를 멈추고 기록을 '받아쓰는 중'으로 바꾼다. 녹음기가 스스로 멈춰 길이를 0으로 돌려줘도 파일에서 다시 재 보고,
+    /// 그래도 0이면(소리를 못 찾으면) 받아쓰기로 넘기지 않고 바로 실패로 남겨 재시도할 수 있게 한다. 닫은 녹음 id
     private func closeActiveRecording() -> Int64? {
         guard let active = activeRecording, let db else { return nil }
         let seconds = recorder.stop()
         activeRecording = nil
         let store = RecordingStore(db)
         if var recording = try? store.find(id: active.id) {
+            let duration = Self.recordedDuration(stopped: seconds, file: AudioFileInfo.duration(of: URL(fileURLWithPath: recording.audioPath)))
             recording.endedAt = Date().timeIntervalSince1970
-            recording.duration = seconds
-            recording.status = .transcribing
+            recording.duration = duration
+            if duration == 0 {
+                recording.status = .failed
+                recording.error = Self.stoppedRecordingMessage
+            } else {
+                recording.status = .transcribing
+            }
             try? store.update(recording)
         }
         AppLog.write("녹음 끝: \(Int(seconds))초")

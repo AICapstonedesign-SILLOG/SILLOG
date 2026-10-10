@@ -67,10 +67,10 @@ final class RecordingFlowTests: XCTestCase {
     override func tearDown() { try? FileManager.default.removeItem(at: folder) }
 
     private func makeState(transcriber: FakeTranscriber = FakeTranscriber(.success(["첫 문장입니다.", "둘째 문장입니다."])),
-                           problem: RecordingProblem? = nil) throws -> (AppState, WGDatabase, FakeRecorder) {
+                           problem: RecordingProblem? = nil, recorderSeconds: Double = 95) throws -> (AppState, WGDatabase, FakeRecorder) {
         let db = try WGDatabase.inMemory()
         addTeardownBlock { try? FileManager.default.removeItem(at: db.recordingsDirectory) }
-        let recorder = FakeRecorder(seconds: 95)
+        let recorder = FakeRecorder(seconds: recorderSeconds)
         let textFolder = folder.appendingPathComponent("Sillog 녹음")
         let state = AppState(preview: { s in
             s.phase = .ready
@@ -245,5 +245,25 @@ final class RecordingFlowTests: XCTestCase {
         XCTAssertNil(RecordingProblem.notBundled.settingsURL)
         XCTAssertEqual(RecordingProblem(TranscriptionError.dictationDisabled), .dictation)
         XCTAssertEqual(RecordingProblem(TranscriptionError.speechDenied), .speech)
+    }
+
+    // MARK: 스스로 멈춘 녹음기 (인코딩 오류·입력 장치 끊김·디스크 가득 참): currentTime 이 0 이어도 파일에서 길이를 다시 잰다
+
+    func testRecordedDurationFallsBackToTheFile() {
+        XCTAssertEqual(AppState.recordedDuration(stopped: 0, file: 95), 95)
+        XCTAssertEqual(AppState.recordedDuration(stopped: 12, file: nil), 12)
+        XCTAssertEqual(AppState.recordedDuration(stopped: 0, file: nil), 0)
+    }
+
+    func testARecorderThatStoppedOnItsOwnLeavesAFailedRecordingWithItsAudio() async throws {
+        let (state, db, _) = try makeState(recorderSeconds: 0)                  // FakeRecorder 의 파일도 읽히는 소리 파일이 아니다
+        await state.startRecording()
+        let id = try XCTUnwrap(state.activeRecording?.id)
+        await state.stopRecording()
+        let failed = try XCTUnwrap(RecordingStore(db).find(id: id))
+        XCTAssertEqual(failed.status, .failed)
+        XCTAssertEqual(failed.error, AppState.stoppedRecordingMessage)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: failed.audioPath), "길이를 못 찾아도 녹음 파일은 남긴다")
+        XCTAssertEqual(state.recordingProblem, .failed(AppState.stoppedRecordingMessage))
     }
 }
