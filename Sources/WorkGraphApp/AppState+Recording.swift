@@ -63,16 +63,26 @@ extension AppState {
         if let id = closeActiveRecording() { AppLog.write("앱 종료: 녹음 \(id) 을 닫고 다음 실행 때 받아씀") }
     }
 
-    /// 보관함 [다시 받아쓰기] (받아쓰기에 실패한 녹음)
+    /// 보관함 [다시 받아쓰기] (받아쓰기에 실패한 녹음). recording 은 화면이 들고 있던 값이라 다시 읽어 확인한다 (두 번 눌렸거나 그사이 바뀌었을 수 있다)
     func retranscribe(_ recording: Recording) async {
-        guard let id = recording.id, let pipeline = recordingPipeline else { return }
+        guard let id = recording.id, let db, let pipeline = recordingPipeline else { return }
+        guard let current = try? RecordingStore(db).find(id: id), current.status == .failed else { return }
+        let audioURL = URL(fileURLWithPath: current.audioPath)
+        let duration = AudioFileInfo.duration(of: audioURL)
+        if duration == nil, current.duration < RecordingPipeline.minDuration {
+            // 녹음 중 앱이 꺼져 파일이 끝까지 쓰이지 않았고 길이도 모른다: 다시 받아써도 내용이 없다고 잘못 끝나지 않게 실패로 둔다
+            recordingProblem = .failed(Self.crashedRecordingMessage)
+            AppLog.write("녹음 \(id): \(Self.crashedRecordingMessage)")
+            return
+        }
         do {
-            try pipeline.prepareRetry(id: id, duration: AudioFileInfo.duration(of: URL(fileURLWithPath: recording.audioPath)))
+            try pipeline.prepareRetry(id: id, duration: duration)
         } catch {
             recordingProblem = .failed("다시 받아쓰지 못했어요. \(error.localizedDescription)")
             return
         }
         recordingProblem = nil
+        refreshRecordings()
         await enqueueRecording(id)
     }
 
@@ -110,10 +120,12 @@ extension AppState {
 
     /// 정리를 차례로: 앞의 정리가 끝난 뒤에 시작하고, 이 녹음의 정리가 끝나면 돌아온다
     func enqueueRecording(_ id: Int64) async {
+        guard queuedRecordingIds.insert(id).inserted else { return }                 // 이미 차례를 기다리는 녹음
         let previous = recordingQueue
         let task = Task { @MainActor [weak self] in
             await previous?.value
             await self?.processRecording(id)
+            self?.queuedRecordingIds.remove(id)
         }
         recordingQueue = task
         await task.value
@@ -162,6 +174,7 @@ extension AppState {
             try? store.update(recording)
         }
         AppLog.write("녹음 끝: \(Int(seconds))초")
+        refreshRecordings()
         return active.id
     }
 

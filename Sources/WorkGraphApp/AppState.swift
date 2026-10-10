@@ -83,6 +83,8 @@ final class AppState: ObservableObject {
     var recorder: any AudioRecording = VoiceRecorder()
     var recordingPermissions: any RecordingPermissions = SystemRecordingPermissions()
     var recordingQueue: Task<Void, Never>?
+    /// 차례를 기다리거나 정리 중인 녹음 id (같은 녹음을 두 번 넣지 않게)
+    var queuedRecordingIds: Set<Int64> = []
     var recordingStepToken = 0
     let notifier = SuggestionNotifier()
     private var tasks: [Task<Void, Never>] = []

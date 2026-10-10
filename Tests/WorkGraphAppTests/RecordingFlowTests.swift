@@ -31,10 +31,14 @@ struct FakePermissions: RecordingPermissions {
 final class FakeTranscriber: Transcribing, @unchecked Sendable {
     private let lock = NSLock()
     private var results: [Result<[String], TranscriptionError>]
+    private(set) var calls = 0
     init(_ results: Result<[String], TranscriptionError>...) { self.results = results }
 
     func transcribe(audio: URL, duration: Double, progress: @escaping @Sendable (Double) -> Void) async throws -> [String] {
-        let next: Result<[String], TranscriptionError> = lock.withLock { results.count > 1 ? results.removeFirst() : results[0] }
+        let next: Result<[String], TranscriptionError> = lock.withLock {
+            calls += 1
+            return results.count > 1 ? results.removeFirst() : results[0]
+        }
         progress(0.5)
         return try next.get()
     }
@@ -138,6 +142,33 @@ final class RecordingFlowTests: XCTestCase {
         XCTAssertEqual(ready.transcript, "다시 받아쓴 문장.")
     }
 
+    func testRetryingARecordingWhoseFileCannotBeReadKeepsItFailed() async throws {
+        let (state, db, _) = try makeState()
+        let broken = folder.appendingPathComponent("crash.m4a")
+        try Data("not audio".utf8).write(to: broken)
+        let lost = try RecordingStore(db).insert(Recording(startedAt: 3_000, audioPath: broken.path, status: .recording))
+        await state.resumeRecordings()
+        let failed = try XCTUnwrap(RecordingStore(db).find(id: lost.id!))
+        XCTAssertEqual(failed.status, .failed)
+        await state.retranscribe(failed)
+        XCTAssertEqual(try RecordingStore(db).find(id: lost.id!)?.status, .failed, "읽을 수 없는 녹음은 다시 받아써도 실패로 남는다")
+        XCTAssertEqual(state.recordingProblem, .failed(AppState.crashedRecordingMessage))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: broken.path))
+    }
+
+    func testTappingRetryTwiceTranscribesOnce() async throws {
+        let transcriber = FakeTranscriber(.failure(.dictationDisabled), .success(["다시 받아쓴 문장."]))
+        let (state, db, _) = try makeState(transcriber: transcriber)
+        await state.startRecording()
+        await state.stopRecording()
+        let failed = try XCTUnwrap(RecordingStore(db).all().first)
+        async let first: Void = state.retranscribe(failed)
+        async let second: Void = state.retranscribe(failed)
+        _ = await (first, second)
+        XCTAssertEqual(transcriber.calls, 2, "처음 한 번 + 다시 받아쓰기 한 번")
+        XCTAssertEqual(try RecordingStore(db).find(id: failed.id!)?.status, .ready)
+    }
+
     func testUnfinishedRecordingsResumeOrFailOnLaunch() async throws {
         let (state, db, _) = try makeState()
         let store = RecordingStore(db)
@@ -172,6 +203,14 @@ final class RecordingFlowTests: XCTestCase {
         XCTAssertEqual(saved.status, .transcribing, "다음 실행 때 받아쓰기부터 이어 간다")
         XCTAssertEqual(saved.duration, 95)
         XCTAssertNotNil(saved.endedAt)
+    }
+
+    func testAClosedRecordingShowsAsTranscribingRightAway() async throws {
+        let (state, _, _) = try makeState()
+        await state.startRecording()
+        let id = try XCTUnwrap(state.activeRecording?.id)
+        state.finishRecordingOnQuit()
+        XCTAssertEqual(state.recordings.first { $0.id == id }?.status, .transcribing)
     }
 
     func testLateProgressFromAFinishedRunIsIgnored() async throws {
