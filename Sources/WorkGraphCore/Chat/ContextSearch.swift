@@ -157,6 +157,16 @@ public struct ContextSearch: Sendable {
             for row in try Row.fetchAll(conn, sql: "SELECT * FROM chat_messages WHERE ts >= ? AND ts <= ? AND (\(chat.0))\(Self.taskRestriction("task_id", access))\(activity) ORDER BY ts DESC LIMIT 8", arguments: [from, to, chat.1]) {
                 results.append(.init(id: "chat:\(row["id"] as Int64)", title: "\(row["tool"] as String) 사용자 메시지", location: row["cwd"] ?? "", excerpt: "\(Self.date(row["ts"]))\n" + String((row["text"] as String).prefix(1600))))
             }
+            // 받아쓴 녹음: 제목·요약·받아쓴 글. 업무 접근 범위를 AI 도구 대화처럼 따른다
+            let recording = Self.match(needle, index: "recordings_fts", row: "id", fallback: "COALESCE(title, '') || ' ' || COALESCE(summary, '') || ' ' || transcript")
+            for row in try Row.fetchAll(conn, sql: """
+                SELECT id, started_at, duration, title, summary, transcript, text_path FROM recordings
+                WHERE status = 'ready' AND \(RecordingStore.hasTranscriptSQL) AND started_at <= ? AND COALESCE(ended_at, started_at) >= ?
+                  AND (\(recording.0))\(Self.taskRestriction("task_id", access))\(activity)
+                ORDER BY started_at DESC LIMIT 6
+                """, arguments: [to, from, recording.1]) {
+                results.append(Self.recordingSource(row, needle: needle))
+            }
             let filter = try conversationFilter(conn)
             let words = needle.split(whereSeparator: { !$0.isLetter && !$0.isNumber }).map(String.init).prefix(24)
             let match = words.allSatisfy { $0.count >= 3 } && !words.isEmpty
@@ -219,6 +229,8 @@ public struct ContextSearch: Sendable {
                 case "observation": allowed = try Bool.fetchOne(conn, sql: "SELECT EXISTS(SELECT 1 FROM observations WHERE id = ?\(Self.taskRestriction("task_id", access)))", arguments: [id]) == true
                 case "card": allowed = try Bool.fetchOne(conn, sql: "SELECT EXISTS(SELECT 1 FROM screen_cards WHERE id = ?\(Self.cardRestriction(access)))", arguments: [id]) == true
                 case "chat": allowed = try Bool.fetchOne(conn, sql: "SELECT EXISTS(SELECT 1 FROM chat_messages WHERE id = ?\(Self.taskRestriction("task_id", access)))", arguments: [id]) == true
+                case "recording":
+                    allowed = try Bool.fetchOne(conn, sql: "SELECT EXISTS(SELECT 1 FROM recordings WHERE id = ?\(Self.taskRestriction("task_id", access)))", arguments: [id]) == true
                 case "digest":
                     allowed = try Bool.fetchOne(conn, sql: """
                         SELECT EXISTS(SELECT 1 FROM digests d JOIN nodes t ON t.label = 'Task' AND t.key = d.task_key WHERE d.id = ?\(Self.taskRestriction("t.id", access)))
@@ -256,6 +268,15 @@ public struct ContextSearch: Sendable {
                 let metrics = (try? encoder.encode(digest.metrics)).map { String(decoding: $0, as: UTF8.self) } ?? "{}"
                 return [.init(id: sourceID, title: digest.title, location: "",
                               excerpt: "\(header)\n\(digest.body)\n\n수치: \(metrics)\n근거 key: \(digest.anchors.joined(separator: ", "))")]
+            case "recording":
+                guard let row = try Row.fetchOne(conn, sql: "SELECT * FROM recordings WHERE id = ? AND status = 'ready'", arguments: [id]) else { return [] }
+                let transcript: String = row["transcript"]
+                let title: String? = row["title"]
+                let offset = max(1, start)
+                let page = String(transcript.dropFirst(offset - 1).prefix(18000))
+                let footer = "[전체 \(transcript.count)자 · 다음 시작 위치 \(offset + page.count)]"
+                return [.init(id: sourceID, title: "녹음 · \(title ?? "제목 없음")", location: row["text_path"] ?? "",
+                              excerpt: Self.recordingHeader(row) + "\n\n" + page + "\n" + footer)]
             default: return []
             }
         }
@@ -350,6 +371,28 @@ public struct ContextSearch: Sendable {
             return [.init(id: "usage:\(firstDay)..\(lastDay)\(scope)", title: "사용 시간 집계 · \(firstDay) ~ \(lastDay)", location: "",
                           excerpt: lines.joined(separator: "\n"))]
         }
+    }
+
+    /// 녹음 출처 머리: 녹음 시각·길이, 받아쓴 글이라는 표시, 요약
+    private static func recordingHeader(_ row: Row) -> String {
+        let startedAt: Double = row["started_at"], duration: Double = row["duration"]
+        let summary: String? = row["summary"]
+        var header = "\(date(startedAt)) 녹음 (\(RecordingText.duration(duration))) · 이 Mac 의 음성 인식으로 받아쓴 글 (잘못 들은 단어가 있을 수 있음)"
+        if let summary, !summary.isEmpty { header += "\n요약: \(summary)" }
+        return header
+    }
+
+    /// 녹음 검색 결과: 받아쓴 글에서 검색어가 처음 나온 곳 앞뒤
+    private static func recordingSource(_ row: Row, needle: String) -> ChatSource {
+        let transcript: String = row["transcript"]
+        let words = needle.split(whereSeparator: \.isWhitespace).map(String.init)
+        let range = words.compactMap { transcript.range(of: $0, options: .caseInsensitive) }.first
+        let start = range.map { transcript.distance(from: transcript.startIndex, to: $0.lowerBound) } ?? 0
+        let id: Int64 = row["id"]
+        let title: String? = row["title"]
+        let body = String(transcript.dropFirst(max(0, start - 200)).prefix(1400))
+        return .init(id: "recording:\(id)", title: "녹음 · \(title ?? "제목 없음")", location: row["text_path"] ?? "",
+                     excerpt: recordingHeader(row) + "\n" + body)
     }
 
     /// Args: time은 Unix 시각이다.
