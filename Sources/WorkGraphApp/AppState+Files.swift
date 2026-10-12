@@ -159,7 +159,7 @@ extension AppState {
         case .move: acceptSuggestion(suggestion)
         case .ignore: ignoreSuggestion(suggestion)
         case .open:
-            selectedTab = .files
+            openFileSuggestions()
             WindowOpener.shared.openMain()
         }
     }

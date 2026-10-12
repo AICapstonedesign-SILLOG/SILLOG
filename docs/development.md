@@ -39,7 +39,7 @@ SIGN_IDENTITY="Apple Development: 인증서 이름" ./scripts/make-app.sh
 | `WORKGRAPH_CODEX_AUTH` | 앱 전용 ChatGPT 인증 파일 경로 |
 | `WORKGRAPH_SHOW_WINDOW=1` | 시작 시 메인 창 표시 |
 | `WORKGRAPH_REQUEST_PERMISSIONS=1` | 시작 시 손쉬운 사용·화면 기록 권한 요청 |
-| `WORKGRAPH_TAB` | 시작 탭: `graph`, `tasks`, `files`, `library`, `activity`, `chat`, `settings` |
+| `WORKGRAPH_TAB` | 시작 탭: `graph`, `chat`, `records`(기록 자료), `settings`. `files`, `library`, `activity` 는 기록 자료의 그 구역으로 연다 (업무 목록은 늘 왼쪽에 있다) |
 
 ## 테스트와 CLI
 
@@ -159,7 +159,8 @@ swift run wgctl digest show --week 2026-W40   # 요약 확인
 - **채팅 시스템 프롬프트**: `Sources/WorkGraphCore/Chat/Prompts/chat-system-prompt.md`(원문), `ChatSystemPrompt.swift`(끝의 `{{…}}` 칸 채우기)
 - **스킬**: `Sources/WorkGraphCore/Chat/Skills/catalog.json`과 각 Markdown 지침
 - **대화·예약 상태**: `Sources/WorkGraphApp/Chat/ChatState.swift`
-- **프로젝트 제안·소속**: `Sources/WorkGraphCore/Chat/ProjectOrganizer.swift`, `ProjectStore.swift`, `Sources/WorkGraphApp/Chat/ProjectState.swift`
+- **채팅 범위(분야·업무 여러 개로 좁히기)**: `ChatScope.focus`(대화 기록의 `scope.focuses`), `Sources/WorkGraphCore/Chat/ChatFocus.swift`(고를 거리, 프롬프트의 `<focus>`), `ContextSearch.swift`의 `access`(합친 범위로 거르기), `Sources/WorkGraphApp/Views/ChatFocusPicker.swift`(범위 단추, 분야→업무 나무 `ChatFocusTree`와 고르기 규칙)
+- **프로젝트 제안·소속**(화면에서 뺌, 자동 제안도 부르지 않음. 데이터와 코드는 남김): `Sources/WorkGraphCore/Chat/ProjectOrganizer.swift`, `ProjectStore.swift`, `Sources/WorkGraphApp/Chat/ProjectState.swift`
 - **자료 보관·추출**: `Sources/WorkGraphCore/Chat/LibraryStore.swift`, `FileTextExtractor.swift`, `Sources/WorkGraphApp/Chat/LibraryState.swift`, `Views/LibraryView.swift`
 - **그래프 화면**: `Sources/WorkGraphApp/Resources/graph`
 - **기록 정리**: `Sources/WorkGraphCore/Memory/Consolidator.swift`, `LedgerBuilder.swift`, `ActivityTally.swift`, `Digest*.swift`, `Storage/Pruner.swift`, `RetentionPolicy.swift`, `StorageUsage.swift`, `Sources/WorkGraphApp/Views/StorageSettingsView.swift`

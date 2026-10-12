@@ -14,6 +14,10 @@ final class ChatState: ObservableObject {
     @Published var draft = ""
     @Published var error: String?
     @Published var activeMessage: ConversationMessage?
+    /// 범위 단추의 고를 거리: 이 대화에서 볼 수 있는 분야·업무
+    @Published var focusChoices = ChatFocusChoices()
+    /// 늘어나면 입력칸으로 커서를 옮긴다 (범위를 고르면 바로 쓸 수 있게)
+    @Published var inputFocusRequest = 0
     let projects: ProjectState
     let library: LibraryState
     private let db: WGDatabase
@@ -46,13 +50,40 @@ final class ChatState: ObservableObject {
             try reload()
             if let first = conversations.first { select(first) }
         } catch { self.error = error.localizedDescription }
+        refreshFocusChoices()
+    }
+
+    /// Args: 없음.
+    /// Returns: 없음. 범위 단추가 보여 줄 분야·업무를 다시 읽는다 (지금 대화의 프로젝트 범위 안에서).
+    /// Raises: 없음. 읽기 오류면 고를 거리가 비어 모든 기록만 남는다.
+    /// Args: focus는 고른 업무·분야(비면 모든 기록), movesCursor면 입력칸으로 커서를 옮긴다.
+    /// Returns: 없음. 대화 범위를 바꾼다.
+    /// Raises: 없음.
+    func setFocus(_ focus: [ChatFocus], movesCursor: Bool = true) {
+        current.scope.focus = focus
+        current.scope.useActivity = true
+        if movesCursor { inputFocusRequest += 1 }
+    }
+
+    /// Args: 없음.
+    /// Returns: 없음. 내 기록을 쓰지 않는다 (웹·파일·보관함만).
+    /// Raises: 없음.
+    func useNoRecords() {
+        current.scope.focus = []
+        current.scope.useActivity = false
+    }
+
+    func refreshFocusChoices() {
+        let fresh = (try? ContextSearch(db, projectID: current.projectID).focusChoices()) ?? ChatFocusChoices()
+        if fresh != focusChoices { focusChoices = fresh }
     }
 
     /// Args: 없음.
     /// Returns: 없음. 새 대화 작성 화면으로 이동한다.
     /// Raises: 없음.
-    func newConversation(projectID: String? = nil) {
-        current = ChatConversation(); current.projectID = projectID; messages = []; draft = ""; error = nil
+    func newConversation(projectID: String? = nil, focus: [ChatFocus] = []) {
+        current = ChatConversation(); current.projectID = projectID; current.scope.focus = focus; messages = []; draft = ""; error = nil
+        if !focus.isEmpty { refreshFocusChoices(); inputFocusRequest += 1 }   // 업무에서 '이 업무로 묻기'로 왔으면 바로 쓰게
     }
 
     /// Args: conversation은 선택한 대화이다.
@@ -185,7 +216,6 @@ final class ChatState: ObservableObject {
     /// Raises: 없음. 로그인·앱 종료 시 stop으로 중단한다.
     func startScheduler() {
         guard scheduler == nil else { return }
-        projects.check()
         library.collectExisting()
         titleTask = Task { [weak self] in
             guard let self else { return }
@@ -211,6 +241,26 @@ final class ChatState: ObservableObject {
         guard !running else { return false }
         do {
             var conversation = conversation
+            // 고른 범위 중 사라진 것이 있으면 넓혀서 보내지 않는다. 업무가 합쳐진 경우엔 저장된 대화에 남는 업무가 적혀 있다 (TaskMerger)
+            if !conversation.scope.focus.isEmpty {
+                var focus = conversation.scope.focus
+                if try focus.contains(where: { try !ContextSearch.exists($0, in: db) }),
+                   let saved = try store.conversations().first(where: { $0.id == conversation.id })?.scope.focus, saved != focus, !saved.isEmpty,
+                   try saved.allSatisfy({ try ContextSearch.exists($0, in: db) }) {
+                    focus = saved
+                }
+                let gone = try focus.filter { try !ContextSearch.exists($0, in: db) }
+                if !gone.isEmpty {
+                    let names = gone.map { "'\($0.title)'" }.joined(separator: ", ")
+                    if automationID != nil { error = "\(names) 범위를 찾을 수 없어 예약을 실행하지 못했어요."; return false }
+                    let kept = focus.filter { !gone.contains($0) }
+                    if current.id == conversation.id { current.scope.focus = kept }
+                    error = "\(names) 범위를 찾을 수 없어 " + (kept.isEmpty ? "모든 기록으로 바꿨어요" : "빼고 남은 범위로 바꿨어요") + ". 다시 보내 주세요."
+                    return false
+                }
+                conversation.scope.focus = focus
+                if current.id == conversation.id { current.scope.focus = focus }
+            }
             var scope = try ProjectStore(db).scope(for: conversation)
             conversation.projectID = scope.projectID
             let previous = try store.messages(conversation.id)
@@ -280,7 +330,6 @@ final class ChatState: ObservableObject {
                         self.applyTitle(title, to: conversation.id, replacing: "새 대화")
                     } catch { self.error = "대화 제목 생성 실패: \(error.localizedDescription)" }
                 }
-                if !Task.isCancelled { self.projects.check() }
             }
             return true
         } catch { self.error = error.localizedDescription; return false }

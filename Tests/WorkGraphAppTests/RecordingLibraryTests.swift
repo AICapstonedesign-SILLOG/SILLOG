@@ -141,7 +141,7 @@ final class RecordingLibraryTests: XCTestCase {
         _ = try RecordingStore(database).insert(stored)
         let state = AppState(preview: { s in
             s.phase = .ready
-            s.selectedTab = .library
+            s.selectedTab = .records; s.recordsSection = .library
             let offline = OpenAICompatClient(baseURL: URL(string: "http://localhost:5010/v1")!, model: "preview", apiKey: nil)
             s.chat = ChatState(db: database, makeClient: { .model(offline) }, makeProjectClient: { offline })
         }, database: database)

@@ -1,20 +1,32 @@
 import SwiftUI
 import WorkGraphCore
 
-/// 업무 탭: 왼쪽 업무 트리(분야 폴더 안에 업무), 오른쪽 업무 상세(세션 목록과 다시 열기). Figma 참고 TK-01, TK-02, TK-W1
+/// 업무: 왼쪽 업무 트리(분야 폴더 안에 업무), 오른쪽 업무 상세(세션 목록과 다시 열기). Figma 참고 TK-01, TK-02, TK-W1.
+/// 창에서는 업무 패널(TasksPanel)이 목록만 보이다가 업무를 고르면 상세까지 펼친다
 struct TasksView: View {
     @EnvironmentObject private var state: AppState
     @State private var selectedTask: Int64?
     @State private var collapsed: Set<String> = []          // 접은 분야 폴더
     @State private var sessions: [SessionSummary] = []
     @State private var digests: [Digest] = []
-    @State private var showingDigests: Bool
+    @State private var tab: DetailTab
+    @State private var materials = TaskMaterials()
+    @State private var openKinds: Set<String> = []          // 자료 탭에서 '더 보기'로 펼친 종류
     @State private var editing: Digest?
+    /// 목록에서 업무를 눌렀을 때 (업무 패널이 상세를 펼친다)
+    private let onSelect: (Int64) -> Void
+    /// 목록 옆에 상세를 그릴지. 업무 패널이 접혀 있으면 목록만 (안 보이는 상세가 옆 본문의 클릭을 가로채지 않게)
+    private let showsDetail: Bool
 
-    /// 스냅샷용: 고른 업무와 요약 탭으로 시작
-    init(selectedTask: Int64? = nil, showingDigests: Bool = false) {
+    /// 상세의 탭: 작업 세션, 요약(주간·월간), 자료(그래프 업무 팝업과 같은 종류별 자료와 같은 맥락 업무)
+    enum DetailTab { case sessions, digests, materials }
+
+    /// 스냅샷용: 고른 업무와 탭으로 시작
+    init(selectedTask: Int64? = nil, tab: DetailTab = .sessions, showsDetail: Bool = true, onSelect: @escaping (Int64) -> Void = { _ in }) {
         _selectedTask = State(initialValue: selectedTask)
-        _showingDigests = State(initialValue: showingDigests)
+        _tab = State(initialValue: tab)
+        self.showsDetail = showsDetail
+        self.onSelect = onSelect
     }
 
     private static let day: DateFormatter = {
@@ -33,20 +45,26 @@ struct TasksView: View {
         HStack(spacing: 0) {
             sidebar.frame(width: 276)
             Rectangle().fill(Brand.hairline).frame(width: 1)
-            Group {
-                if state.taskList.isEmpty {
-                    emptyState
-                } else if let task = state.taskList.first(where: { $0.id == selectedTask }) {
-                    detail(task)
-                } else {
-                    placeholder
+            if showsDetail {
+                Group {
+                    if state.taskList.isEmpty {
+                        emptyState
+                    } else if let task = state.taskList.first(where: { $0.id == selectedTask }) {
+                        detail(task)
+                    } else {
+                        placeholder
+                    }
                 }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(.white)
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(.white)
         }
-        .onAppear { state.refreshTasks(); reload() }
-        .onChange(of: selectedTask) { _, _ in reload() }
+        .onAppear {
+            if let id = state.selectedTaskId { selectedTask = id }        // 그래프에서 고른 업무로 시작
+            state.refreshTasks(); reload()
+        }
+        .onChange(of: state.selectedTaskId) { _, id in if let id, id != selectedTask { selectedTask = id } }   // 그래프, 같은 맥락 업무에서 고를 때
+        .onChange(of: selectedTask) { _, _ in openKinds = []; reload() }
         .onChange(of: state.graphVersion) { _, _ in state.refreshTasks(); reload() }
         .sheet(item: $editing) { digest in
             DigestEditSheet(digest: digest) { body in
@@ -87,18 +105,22 @@ struct TasksView: View {
     private var sidebar: some View {
         VStack(alignment: .leading, spacing: 0) {
             VStack(alignment: .leading, spacing: 0) {
-                Eyebrow("YOUR WORK")
                 HStack(alignment: .firstTextBaseline, spacing: 10) {
                     Text("업무").font(Brand.suit(23, .semibold)).tracking(-0.8).foregroundStyle(Brand.ink)
                     Text("\(state.taskList.count)").font(.custom("Jost-Light", size: 19)).foregroundStyle(Brand.gray)
                 }
-                .padding(.top, 8)
-                Text("흩어진 기록을 하나의 흐름으로").font(Brand.suit(11)).foregroundStyle(Brand.gray).padding(.top, 8)
             }
             .padding(.horizontal, 24).padding(.top, 27).padding(.bottom, 20)
             .frame(maxWidth: .infinity, alignment: .leading)
 
             if state.taskList.isEmpty {
+                // 창에서는 상세가 접혀 있어 오른쪽 빈 화면 안내가 안 보이므로 목록에도 한 줄
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("아직 업무가 없어요").font(Brand.suit(13, .medium)).foregroundStyle(Brand.ink)
+                    Text("활동이 쌓여 정리되면 업무가 여기에 모여요.").font(Brand.suit(11)).foregroundStyle(Brand.gray)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .padding(.horizontal, 24)
                 Spacer()
             } else {
                 ScrollView {
@@ -143,13 +165,18 @@ struct TasksView: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel("\(folder.name) 분야, 업무 \(folder.tasks.count)개, \(open ? "펼침" : "접힘")")
+        .contextMenu {
+            if folder.name != Self.noField {                                        // '분야 없음' 은 분야가 아니라 고를 수 없다
+                Button("이 분야로 묻기") { state.askAbout(theme: folder.name) }
+            }
+        }
         .padding(.top, 6)
     }
 
     /// 업무 줄: 폴더 안으로 들여 문서처럼. 제목과 작업 시간, 아래에 작은 종류 (세션 수·마지막 활동은 오른쪽 상세에)
     private func taskRow(_ task: TaskSummary) -> some View {
         let on = task.id == selectedTask
-        return Button { selectedTask = task.id } label: {
+        return Button { selectedTask = task.id; onSelect(task.id) } label: {
             HStack(alignment: .top, spacing: 7) {
                 Image(systemName: "doc.text").font(.system(size: 11)).foregroundStyle(on ? Brand.ink : Brand.gray)
                     .frame(width: 16).padding(.top, 1)
@@ -160,11 +187,11 @@ struct TasksView: View {
                         Text(Self.duration(task.activeSeconds)).font(Brand.suit(10)).foregroundStyle(Brand.tabText).fixedSize()
                     }
                     if let type = task.taskType { Text(type).font(Brand.suit(9)).foregroundStyle(Brand.gray) }
-                    if let projects = state.chat?.projects { ProjectAssignmentLabel(projects: projects, itemID: "task:\(task.id)") }
                 }
             }
             .padding(.leading, 25).padding(.trailing, 10).padding(.vertical, 8)          // 폴더 아이콘 아래로 들여쓰기
             .frame(maxWidth: .infinity, alignment: .leading)
+            .hoverHighlight(cornerRadius: 5, active: !on)
             .background(on ? RoundedRectangle(cornerRadius: 5).fill(.white.opacity(0.64)) : nil)
             .overlay(RoundedRectangle(cornerRadius: 5).strokeBorder(on ? Brand.hairline : .clear))
             .overlay(alignment: .leading) { if on { Rectangle().fill(Brand.ink).frame(width: 2).padding(.vertical, 8) } }
@@ -172,7 +199,7 @@ struct TasksView: View {
         }
         .buttonStyle(.plain)
         .contextMenu {
-            if let projects = state.chat?.projects { ProjectMoveMenu(projects: projects, itemID: "task:\(task.id)") }
+            Button("이 업무로 묻기") { state.askAbout(task: task) }
         }
     }
 
@@ -200,35 +227,20 @@ struct TasksView: View {
 
     private func detail(_ task: TaskSummary) -> some View {
         VStack(alignment: .leading, spacing: 0) {
-            HStack(alignment: .center) {
-                VStack(alignment: .leading, spacing: 0) {
-                    HStack(spacing: 10) {
-                        Eyebrow("WORK CONTEXT")
-                        if let type = task.taskType { BrandBadge(type) }
-                    }
-                    Text(task.title).font(Brand.suit(28, .semibold)).tracking(-1.26).foregroundStyle(Brand.ink).lineLimit(1).padding(.top, 14)
+            // 이름과 단추가 한 줄에 다 들어가면 나란히, 드로어가 좁아 안 들어가면 단추를 이름 아래 줄로
+            ViewThatFits(in: .horizontal) {
+                HStack(alignment: .center) {
+                    heading(task, lines: 1)
+                    Spacer(minLength: 16)
+                    headerButtons(task)
                 }
-                Spacer(minLength: 16)
-                let pinned = state.isTaskPinned(task.key)
-                Button { state.toggleTaskPin(task.key) } label: {
-                    HStack(spacing: 6) {
-                        Image(systemName: pinned ? "pin.fill" : "pin").font(.system(size: 11))
-                        Text(pinned ? "원문 보존 중" : "원문 보존")
-                    }
+                VStack(alignment: .leading, spacing: 16) {
+                    heading(task, lines: 2)
+                    HStack(spacing: 8) { headerButtons(task) }
                 }
-                .buttonStyle(BrandButtonStyle())
-                .help("이 업무의 화면 텍스트와 활동 기록을 보관 기간이 지나도 지우지 않아요")
-                Button { state.prepareResume(taskId: task.id) } label: {
-                    HStack(spacing: 7) {
-                        Image(systemName: "arrow.counterclockwise").font(.system(size: 12))
-                        Text("다시 열기")
-                    }
-                    .padding(.horizontal, 6)
-                }
-                .buttonStyle(BrandButtonStyle(kind: .primary))
             }
             .padding(.horizontal, 33).padding(.vertical, 30)
-            .frame(height: 155)
+            .frame(maxWidth: .infinity, minHeight: 155, alignment: .leading)
             .overlay(alignment: .bottom) { Rectangle().fill(Brand.line).frame(height: 1) }
 
             if !state.offTaskToday.isEmpty {
@@ -245,14 +257,17 @@ struct TasksView: View {
                 VStack(alignment: .leading, spacing: 0) {
                     stats(task)
                     HStack(alignment: .firstTextBaseline, spacing: 22) {
-                        tabButton("작업 세션", count: sessions.count, on: !showingDigests) { showingDigests = false }
-                        tabButton("요약", count: digests.count, on: showingDigests) { showingDigests = true }
+                        tabButton("작업 세션", count: sessions.count, on: tab == .sessions) { tab = .sessions }
+                        tabButton("요약", count: digests.count, on: tab == .digests) { tab = .digests }
+                        tabButton("자료", count: Self.kinds.reduce(0) { $0 + materials[keyPath: $1.items].count }, on: tab == .materials) { tab = .materials }
                         Spacer()
-                        Text(showingDigests ? "주간·월간, 최근 기간 순" : "최근 활동 순").font(Brand.suit(10)).foregroundStyle(Brand.gray)
+                        Text(tab == .digests ? "주간·월간, 최근 기간 순" : tab == .materials ? "종류별, 처음 쓴 순" : "최근 활동 순").font(Brand.suit(10)).foregroundStyle(Brand.gray)
                     }
                     .padding(.vertical, 23)
-                    if showingDigests {
+                    if tab == .digests {
                         digestList
+                    } else if tab == .materials {
+                        materialsList
                     } else if sessions.isEmpty {
                         VStack(spacing: 8) {
                             Image(systemName: "square.3.stack.3d").font(.system(size: 26, weight: .light)).foregroundStyle(Brand.gray)
@@ -271,25 +286,52 @@ struct TasksView: View {
         }
     }
 
+    private func heading(_ task: TaskSummary, lines: Int) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 10) {
+                if let type = task.taskType { BrandBadge(type) }
+            }
+            Text(task.title).font(Brand.suit(28, .semibold)).tracking(-1.26).foregroundStyle(Brand.ink).lineLimit(lines).padding(.top, 14)
+        }
+    }
+
+    @ViewBuilder
+    private func headerButtons(_ task: TaskSummary) -> some View {
+        let pinned = state.isTaskPinned(task.key)
+        Button { state.askAbout(task: task) } label: {
+            Image(systemName: "bubble.left").font(.system(size: 12))
+        }
+        .buttonStyle(BrandButtonStyle())
+        .help("이 업무로 묻기: 채팅에서 이 업무 기록만 보고 답해요")
+        .accessibilityLabel("이 업무로 묻기")
+        Button { state.toggleTaskPin(task.key) } label: {
+            HStack(spacing: 6) {
+                Image(systemName: pinned ? "pin.fill" : "pin").font(.system(size: 11))
+                Text(pinned ? "원문 보존 중" : "원문 보존")
+            }
+        }
+        .buttonStyle(BrandButtonStyle())
+        .help("이 업무의 화면 텍스트와 활동 기록을 보관 기간이 지나도 지우지 않아요")
+        Button { state.prepareResume(taskId: task.id) } label: {
+            HStack(spacing: 7) {
+                Image(systemName: "arrow.counterclockwise").font(.system(size: 12))
+                Text("다시 열기")
+            }
+            .padding(.horizontal, 6)
+        }
+        .buttonStyle(BrandButtonStyle(kind: .primary))
+    }
+
     private func stats(_ task: TaskSummary) -> some View {
         let minutes = Int(task.activeSeconds / 60)
         return HStack(alignment: .top, spacing: 0) {
-            statCell("TIME SPENT", note: "누적 작업 시간", leading: false) {
-                HStack(alignment: .firstTextBaseline, spacing: 4) {
-                    if minutes >= 60 {
-                        bigNumber("\(minutes / 60)"); unit("시간")
-                        bigNumber("\(minutes % 60)").padding(.leading, 6); unit("분")
-                    } else {
-                        bigNumber("\(minutes)"); unit("분")
-                    }
-                }
+            statCell("작업 시간", note: "누적 작업 시간", leading: false) {
+                bigNumber(minutes >= 60 ? [("\(minutes / 60)", "시간"), ("\(minutes % 60)", "분")] : [("\(minutes)", "분")])
             }
-            statCell("SESSIONS", note: "이어진 작업 세션", leading: true) {
-                HStack(alignment: .firstTextBaseline, spacing: 4) {
-                    bigNumber(String(format: "%02d", task.sessionCount)); unit("개")
-                }
+            statCell("세션", note: "이어진 작업 세션", leading: true) {
+                bigNumber([(String(format: "%02d", task.sessionCount), "개")])
             }
-            statCell("LAST ACTIVITY", note: "내 업무 기록", leading: true) {
+            statCell("마지막 활동", note: "내 업무 기록", leading: true) {
                 Text(task.sessionCount == 0 ? "활동 없음" : Self.lastActive(task.lastActive))
                     .font(Brand.suit(17)).foregroundStyle(Brand.ink).frame(height: 60)
             }
@@ -298,11 +340,15 @@ struct TasksView: View {
         .overlay(alignment: .bottom) { Rectangle().fill(Brand.line).frame(height: 1) }
     }
 
-    private func bigNumber(_ text: String) -> some View {
-        Text(text).font(.custom("Jost-ExtraLight", size: 48)).foregroundStyle(Brand.ink)
-    }
-    private func unit(_ text: String) -> some View {
-        Text(text).font(Brand.suit(11)).foregroundStyle(Brand.gray)
+    /// 큰 숫자와 작은 단위를 한 글줄로 (예: 2 시간  40 분). 칸이 좁으면(드로어가 줄면) 잘리지 않고 통째로 작아진다
+    private func bigNumber(_ parts: [(value: String, unit: String)]) -> some View {
+        parts.enumerated().reduce(Text(verbatim: "")) { line, part in
+            let gap = Text(verbatim: part.offset == 0 ? "" : "   ").font(Brand.suit(11))
+            let value = Text(verbatim: part.element.value).font(.custom("Jost-ExtraLight", size: 48)).foregroundStyle(Brand.ink)
+            let unit = Text(verbatim: " " + part.element.unit).font(Brand.suit(11)).foregroundStyle(Brand.gray)
+            return Text("\(line)\(gap)\(value)\(unit)")
+        }
+        .lineLimit(1).minimumScaleFactor(0.5)
     }
 
     private func statCell<Content: View>(_ eyebrow: String, note: String, leading: Bool, @ViewBuilder content: () -> Content) -> some View {
@@ -377,6 +423,108 @@ struct TasksView: View {
         .buttonStyle(.plain)
     }
 
+    // MARK: 자료 (그래프 업무 팝업과 같은 기준)
+
+    /// 누르면 여는 것: 자료는 주소로, 앱은 번들 id 로
+    enum Opens { case resource, app, none }
+    /// 종류: 이름, 그래프와 같은 색, 목록, 누르면 여는 것
+    static let kinds: [(name: String, color: Color, items: KeyPath<TaskMaterials, [TaskMaterials.Item]>, opens: Opens)] = [
+        ("참고자료", Color(hex: 0x00929E), \.references, .resource),
+        ("산출물", Color(hex: 0xB48F3C), \.outputs, .resource),
+        ("앱", Color(hex: 0x915A95), \.apps, .app),
+        ("주제", Color(hex: 0x5A9E6A), \.topics, .none),
+        ("문제", Color(hex: 0xAB5242), \.problems, .none),
+        ("나중에 할 일", Color(hex: 0x6885C3), \.later, .none),
+    ]
+    private static let shownPerKind = 6
+
+    @ViewBuilder private var materialsList: some View {
+        if materials.isEmpty {
+            VStack(spacing: 8) {
+                Image(systemName: "tray").font(.system(size: 26, weight: .light)).foregroundStyle(Brand.gray)
+                Text("아직 모인 자료가 없어요").font(Brand.suit(17, .medium)).foregroundStyle(Brand.ink).padding(.top, 6)
+                Text("세션에서 쓴 자료, 앱, 주제가 여기에 모여요.").font(Brand.suit(12)).foregroundStyle(Brand.gray)
+            }
+            .frame(maxWidth: .infinity).padding(.vertical, 40)
+        } else {
+            VStack(alignment: .leading, spacing: 22) {
+                ForEach(Self.kinds, id: \.name) { kind in
+                    let items = materials[keyPath: kind.items]
+                    if !items.isEmpty { kindSection(kind.name, color: kind.color, items: items, opens: kind.opens) }
+                }
+                if !materials.related.isEmpty { relatedSection }
+            }
+        }
+    }
+
+    private func kindSection(_ name: String, color: Color, items: [TaskMaterials.Item], opens: Opens) -> some View {
+        let open = openKinds.contains(name)
+        let shown = open ? items : Array(items.prefix(Self.shownPerKind))
+        return VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 7) {
+                Circle().fill(color).frame(width: 7, height: 7)
+                Text(name).font(Brand.suit(12, .semibold)).foregroundStyle(Brand.ink)
+                Text("\(items.count)").font(Brand.jost(12)).foregroundStyle(Brand.gray)
+            }
+            .padding(.bottom, 8)
+            ForEach(shown) { item in itemRow(item, opens: opens) }
+            if items.count > Self.shownPerKind {
+                Button { if open { openKinds.remove(name) } else { openKinds.insert(name) } } label: {
+                    Text(open ? "접기" : "외 \(items.count - Self.shownPerKind)개 더 보기").font(Brand.suit(11)).foregroundStyle(Brand.gray)
+                        .padding(.vertical, 6).padding(.leading, 14).contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
+        }
+    }
+
+    @ViewBuilder private func itemRow(_ item: TaskMaterials.Item, opens: Opens) -> some View {
+        let label = HStack(spacing: 8) {
+            Text(item.name).font(Brand.suit(12)).foregroundStyle(Brand.text).lineLimit(1).truncationMode(.middle)
+            Spacer(minLength: 8)
+            if opens != .none { Image(systemName: "arrow.up.right").font(.system(size: 9)).foregroundStyle(Brand.gray) }
+        }
+        .padding(.horizontal, 14).frame(height: 30).frame(maxWidth: .infinity, alignment: .leading)
+        switch opens {
+        case .resource:
+            Button { state.openGraphItem(uri: item.key) } label: { label.contentShape(Rectangle()) }
+                .buttonStyle(.plain).hoverHighlight(cornerRadius: 6).help(item.key)
+        case .app:
+            Button { state.openApp(bundle: item.key) } label: { label.contentShape(Rectangle()) }
+                .buttonStyle(.plain).hoverHighlight(cornerRadius: 6)
+        case .none:
+            label
+        }
+    }
+
+    /// 같은 맥락 업무: 같은 자료나 주제를 쓴 업무. 누르면 드로어가 그 업무로 바뀐다
+    private var relatedSection: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 7) {
+                Circle().fill(Brand.ink.opacity(0.55)).frame(width: 7, height: 7)
+                Text("같은 맥락 업무").font(Brand.suit(12, .semibold)).foregroundStyle(Brand.ink)
+                Text("\(materials.related.count)").font(Brand.jost(12)).foregroundStyle(Brand.gray)
+            }
+            .padding(.bottom, 8)
+            ForEach(materials.related) { related in
+                Button { selectedTask = related.taskId; state.openTaskDetail(id: related.taskId) } label: {
+                    HStack(spacing: 8) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(related.title).font(Brand.suit(12, .medium)).foregroundStyle(Brand.ink).lineLimit(1)
+                            Text("함께 쓴 항목 \(related.shared.count)개, \(related.shared.prefix(2).joined(separator: ", "))")
+                                .font(Brand.suit(10)).foregroundStyle(Brand.gray).lineLimit(1)
+                        }
+                        Spacer(minLength: 8)
+                        Image(systemName: "chevron.right").font(.system(size: 9)).foregroundStyle(Brand.gray)
+                    }
+                    .padding(.horizontal, 14).padding(.vertical, 7).contentShape(Rectangle())
+                }
+                .buttonStyle(.plain).hoverHighlight(cornerRadius: 6)
+                .help(related.shared.joined(separator: ", "))
+            }
+        }
+    }
+
     // MARK: 요약
 
     @ViewBuilder private var digestList: some View {
@@ -419,7 +567,6 @@ struct TasksView: View {
         .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(RoundedRectangle(cornerRadius: 6).fill(Color(hex: 0xF9F8F7)))
-        .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Brand.line))
         .padding(.bottom, 12)
     }
 
@@ -440,6 +587,7 @@ struct TasksView: View {
     private func reload() {
         sessions = selectedTask.map { state.sessions(ofTask: $0) } ?? []
         digests = selectedTask.flatMap { id in state.taskList.first { $0.id == id } }.map { state.digests(forTask: $0.key) } ?? []
+        materials = selectedTask.map { state.taskMaterials($0) } ?? TaskMaterials()
     }
 
     static func duration(_ seconds: Double) -> String {
@@ -473,8 +621,7 @@ struct ResumeSheet: View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(alignment: .top) {
                 VStack(alignment: .leading, spacing: 0) {
-                    Eyebrow("RESUME")
-                    Text("다시 열기").font(Brand.suit(22, .bold)).foregroundStyle(Brand.ink).padding(.top, 8)
+                    Text("다시 열기").font(Brand.suit(22, .bold)).foregroundStyle(Brand.ink)
                     Text(request.plan.title).font(Brand.suit(12)).foregroundStyle(Brand.gray).lineLimit(2).padding(.top, 10)
                 }
                 Spacer()
@@ -587,8 +734,7 @@ struct DigestEditSheet: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             VStack(alignment: .leading, spacing: 0) {
-                Eyebrow("DIGEST")
-                Text("요약 고치기").font(Brand.suit(22, .bold)).foregroundStyle(Brand.ink).padding(.top, 8)
+                Text("요약 고치기").font(Brand.suit(22, .bold)).foregroundStyle(Brand.ink)
                 Text(digest.title).font(Brand.suit(12)).foregroundStyle(Brand.gray).lineLimit(1).padding(.top, 10)
             }
             .padding(.horizontal, 32).padding(.top, 26).padding(.bottom, 18)
@@ -597,7 +743,6 @@ struct DigestEditSheet: View {
                 .font(Brand.suit(12)).scrollContentBackground(.hidden)
                 .padding(12)
                 .background(RoundedRectangle(cornerRadius: 6).fill(Color(hex: 0xF9F8F7)))
-                .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Brand.line))
                 .frame(minHeight: 320)
                 .padding(.horizontal, 32).padding(.top, 18)
             Text("저장하면 '수정함'으로 바뀌고 자동으로 다시 만들지 않아요. 채팅도 고친 내용을 요약으로 읽어요.")

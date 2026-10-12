@@ -64,18 +64,17 @@ extension Color {
     }
 }
 
-/// 영문 눈썹 글씨: CONNECTED CONTEXT, NODE DETAIL 같은 작은 제목
+/// 눈썹 글씨: 기기 코드, 요약 같은 작은 구역 제목
 struct Eyebrow: View {
     let text: String
     init(_ text: String) { self.text = text }
     var body: some View {
-        Text(text.uppercased()).font(Brand.jost(12)).tracking(1.44).foregroundStyle(Brand.gray)
+        Text(text).font(Brand.suit(11, .semibold)).foregroundStyle(Brand.gray)   // 한글 눈썹 글씨
     }
 }
 
-/// 탭 첫머리: 눈썹 글씨, 그 아래 한 줄에 제목(22)과 설명(12), 오른쪽 추가 요소. 아래 구분선.
+/// 탭 첫머리: 한 줄에 제목(22)과 설명(12), 오른쪽 추가 요소. 아래 구분선.
 struct BrandPageHeader<Trailing: View>: View {
-    let eyebrow: String
     let title: String
     var detail: String? = nil
     @ViewBuilder var trailing: () -> Trailing
@@ -83,7 +82,6 @@ struct BrandPageHeader<Trailing: View>: View {
     var body: some View {
         HStack(alignment: .bottom) {
             VStack(alignment: .leading, spacing: 6) {
-                Eyebrow(eyebrow)
                 HStack(alignment: .firstTextBaseline, spacing: 14) {           // 제목과 설명은 한 줄
                     Text(title).font(Brand.suit(22, .semibold)).tracking(-0.66).foregroundStyle(Brand.ink)
                     if let detail { Text(detail).font(Brand.suit(12)).foregroundStyle(Brand.gray).lineLimit(1) }
@@ -102,8 +100,38 @@ struct BrandPageHeader<Trailing: View>: View {
 }
 
 extension BrandPageHeader where Trailing == EmptyView {
-    init(eyebrow: String, title: String, detail: String? = nil) {
-        self.init(eyebrow: eyebrow, title: title, detail: detail, trailing: { EmptyView() })
+    init(title: String, detail: String? = nil) {
+        self.init(title: title, detail: detail, trailing: { EmptyView() })
+    }
+}
+
+/// 위쪽 글자 탭: 기록 자료(파일 · 보관함 · 활동 로그)와 설정(일반 · AI 연결)의 머리. 고른 탭은 진한 글씨에 옅은 회색 알약.
+/// badge 가 0 보다 크면 탭 이름 옆에 하늘색 숫자 (대기 중인 파일 제안)
+struct TextTabs<Item: Hashable & Identifiable & CaseIterable & RawRepresentable>: View where Item.RawValue == String, Item.AllCases: RandomAccessCollection {
+    @Binding var selection: Item
+    var badge: (Item) -> Int = { _ in 0 }
+
+    var body: some View {
+        HStack(spacing: 4) {
+            ForEach(Item.allCases) { item in
+                let on = selection == item
+                Button { selection = item } label: {
+                    HStack(spacing: 6) {
+                        Text(item.rawValue).font(Brand.suit(14, on ? .semibold : .regular)).foregroundStyle(on ? Brand.ink : Brand.tabText)
+                        if badge(item) > 0 { Text("\(badge(item))").font(Brand.jost(12)).foregroundStyle(Color(hex: 0x5E97C8)) }
+                    }
+                    .padding(.horizontal, 13).frame(height: 32)
+                    .background(Capsule().fill(on ? ChatPalette.soft : .clear))
+                    .contentShape(Capsule())
+                }
+                .buttonStyle(.plain)
+                .hoverHighlight(cornerRadius: 16, active: !on)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 26).frame(height: 56)
+        .background(.white)
+        .overlay(alignment: .bottom) { Rectangle().fill(Brand.line).frame(height: 1) }
     }
 }
 
@@ -119,21 +147,47 @@ struct BrandBadge: View {
     }
 }
 
-/// 버튼: primary는 주색 바탕에 흰 글씨, secondary는 흰 바탕에 테두리
+/// 버튼: primary는 옅은 회색 바탕에 진한 글씨, secondary는 글자만 (둘 다 테두리 없음)
 struct BrandButtonStyle: ButtonStyle {
     enum Kind { case primary, secondary }
     var kind: Kind = .secondary
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .font(Brand.suit(11, .medium))
-            .foregroundStyle(kind == .primary ? Color.white : Brand.tabText)
-            .padding(.horizontal, 12)
-            .frame(height: 30)
-            .background(RoundedRectangle(cornerRadius: 6).fill(kind == .primary ? Brand.ink : .white))
-            .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(kind == .primary ? Brand.ink : Brand.line))
-            .opacity(configuration.isPressed ? 0.75 : 1)
-            .contentShape(Rectangle())
+    func makeBody(configuration: Configuration) -> some View { HoverBody(configuration: configuration, kind: kind) }
+
+    /// 커서를 대면 바탕이 한 단계 진해진다 (누르기 전에 눌릴 곳을 알 수 있게)
+    private struct HoverBody: View {
+        let configuration: Configuration
+        let kind: Kind
+        @State private var hover = false
+        @Environment(\.isEnabled) private var enabled
+        var body: some View {
+            let on = hover && enabled
+            configuration.label
+                .font(Brand.suit(11, .medium))
+                .foregroundStyle(kind == .primary || on ? Brand.ink : Brand.tabText)
+                .padding(.horizontal, 12)
+                .frame(height: 30)
+                .background(RoundedRectangle(cornerRadius: 6).fill(kind == .primary ? Color(hex: on ? 0xEBE8E5 : 0xF3F1EF) : on ? Color(hex: 0xF3F1EF) : .clear))   // 주 단추는 옅은 회색 바탕, 보조 단추는 글자만
+                .opacity(configuration.isPressed ? 0.75 : 1)
+                .contentShape(Rectangle())
+                .onHover { h in withAnimation(.easeOut(duration: 0.12)) { hover = h } }
+        }
     }
+}
+
+/// 커서를 대면 옅은 회색 둥근 바탕이 깔린다. 누를 수 있는 줄, 아이콘, 글자 단추에 공통으로 쓴다
+struct HoverHighlight: ViewModifier {
+    var cornerRadius: CGFloat = 8
+    var active = true
+    @State private var hover = false
+    func body(content: Content) -> some View {
+        content
+            .background(RoundedRectangle(cornerRadius: cornerRadius).fill(Color.black.opacity(hover && active ? 0.045 : 0)))
+            .onHover { h in withAnimation(.easeOut(duration: 0.12)) { hover = h } }
+    }
+}
+
+extension View {
+    func hoverHighlight(cornerRadius: CGFloat = 8, active: Bool = true) -> some View { modifier(HoverHighlight(cornerRadius: cornerRadius, active: active)) }
 }
 
 extension View {
@@ -165,11 +219,10 @@ extension View {
         }
     }
 
-    /// 입력칸과 선택 상자 바탕: 흰 바탕, 1px 테두리, 모서리 5
+    /// 입력칸과 선택 상자: 상자 없이 아래 밑줄 하나
     func brandField(height: CGFloat = 35) -> some View {
         frame(height: height)
-            .padding(.horizontal, 10)
-            .background(RoundedRectangle(cornerRadius: 5).fill(.white))
-            .overlay(RoundedRectangle(cornerRadius: 5).strokeBorder(Brand.line))
+            .padding(.horizontal, 2)
+            .overlay(alignment: .bottom) { Rectangle().fill(Brand.line).frame(height: 1) }   // 상자 대신 밑줄 하나
     }
 }

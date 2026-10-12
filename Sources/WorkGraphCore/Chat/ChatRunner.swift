@@ -153,6 +153,7 @@ public struct ChatRunner: Sendable {
         var prompt = ChatSystemPrompt(template: try ChatSystemPrompt.template(), scope: tools.scope, chatModel: backend.modelName,
                                       scheduled: scheduled, skillInstructions: procedures, project: project)
         if tools.scope.useActivity { prompt.rawRecordsSince = (try? tools.search.rawRecordsSince()) ?? nil }
+        if tools.scope.useActivity { prompt.focus = try tools.search.focusOutline() }
         let ledger = ChatRunLedger()
         let remembered = try tools.rememberedSources(history: history)
         if !remembered.isEmpty {

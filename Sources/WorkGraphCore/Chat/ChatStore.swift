@@ -10,7 +10,11 @@ public struct ChatScope: Codable, Equatable, Sendable {
     public var useWeb = false
     public var useGitHub = false
     public var plugins: [String] = []
-    private enum CodingKeys: String, CodingKey { case paths, libraryIDs, useActivity, useWeb, useGitHub, plugins, projectID }
+    /// 활동 기록을 고른 업무·분야로 좁힌다 (여럿이면 합친 범위). 비어 있으면 모든 기록
+    public var focus: [ChatFocus] = []
+    private enum CodingKeys: String, CodingKey { case paths, libraryIDs, useActivity, useWeb, useGitHub, plugins, projectID, focus = "focuses" }
+    /// 하나만 고르던 때 저장한 대화: "focus" 에 항목 하나
+    private enum LegacyKeys: String, CodingKey { case focus }
 
     /// Args: 없음.
     /// Returns: 활동 기록만 사용하는 기본 범위.
@@ -29,6 +33,11 @@ public struct ChatScope: Codable, Equatable, Sendable {
         useWeb = try values.decodeIfPresent(Bool.self, forKey: .useWeb) ?? false
         useGitHub = try values.decodeIfPresent(Bool.self, forKey: .useGitHub) ?? useWeb
         plugins = try values.decodeIfPresent([String].self, forKey: .plugins) ?? []
+        if let saved = try values.decodeIfPresent([ChatFocus].self, forKey: .focus) {
+            focus = saved
+        } else if let single = try decoder.container(keyedBy: LegacyKeys.self).decodeIfPresent(ChatFocus.self, forKey: .focus) {
+            focus = [single]
+        }
     }
 }
 
@@ -245,6 +254,31 @@ public struct ChatStore: Sendable {
     /// Args: 없음.
     /// Returns: 등록된 예약 목록.
     /// Raises: DB·디코딩 오류.
+    /// 업무를 합칠 때: 사라지는 업무를 범위에 둔 대화·예약을 남는 업무로 옮기고(겹치면 하나로), 남는 업무의 지금 이름으로 맞춘다
+    static func moveFocus(from victims: [String], to keep: String, title: String, _ conn: Database) throws {
+        let affected = Set(victims + [keep])
+        for table in ["app_conversations", "app_automations"] {
+            for row in try Row.fetchAll(conn, sql: "SELECT id, payload FROM \(table) WHERE json_type(payload, '$.scope.focuses') = 'array'") {
+                let payload: String = row["payload"]
+                guard var object = try JSONSerialization.jsonObject(with: Data(payload.utf8)) as? [String: Any],
+                      var scope = object["scope"] as? [String: Any], let focuses = scope["focuses"] as? [[String: Any]] else { continue }
+                var moved: [[String: Any]] = [], seen: Set<String> = [], changed = false
+                for var item in focuses {
+                    if item["kind"] as? String == "task", let key = item["key"] as? String, affected.contains(key) {
+                        changed = changed || key != keep || item["title"] as? String != title
+                        item["key"] = keep; item["title"] = title
+                    }
+                    let identity = "\(item["kind"] as? String ?? ""):\(item["key"] as? String ?? "")"
+                    if seen.insert(identity).inserted { moved.append(item) } else { changed = true }
+                }
+                guard changed else { continue }
+                scope["focuses"] = moved; object["scope"] = scope
+                let updated = String(decoding: try JSONSerialization.data(withJSONObject: object), as: UTF8.self)
+                try conn.execute(sql: "UPDATE \(table) SET payload = ? WHERE id = ?", arguments: [updated, row["id"] as String])
+            }
+        }
+    }
+
     public func automations() throws -> [ChatAutomation] {
         try db.writer.read { conn in
             try String.fetchAll(conn, sql: "SELECT payload FROM app_automations ORDER BY rowid DESC")

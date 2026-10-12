@@ -24,7 +24,7 @@ public struct ChatTools: Sendable {
     /// Returns: 채팅 한 번에 사용할 읽기 도구 모음.
     /// Raises: 없음.
     public init(db: WGDatabase, scope: ChatScope, searchKey: String = "", searchModel: String = "", pluginToken: @escaping @Sendable (String) async throws -> String = { _ in "" }) {
-        search = ContextSearch(db, projectID: scope.projectID, includeActivity: scope.useActivity)
+        search = ContextSearch(db, projectID: scope.projectID, focus: scope.focus, includeActivity: scope.useActivity)
         library = LibraryStore(db)
         self.scope = scope; self.searchKey = searchKey; self.searchModel = searchModel; self.pluginToken = pluginToken
     }

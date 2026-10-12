@@ -33,6 +33,13 @@ final class AppState: ObservableObject {
     /// 로그인해야 쓸 수 있다. `.ready` 가 되기 전에는 수집기도 배치도 돌지 않는다.
     @Published var phase: AppPhase = .login
     @Published var selectedTab: MainWindow.Tab = MainWindow.initialTab
+    /// 기록 자료 탭에서 보고 있는 구역 (메뉴 막대·알림이 파일 구역으로 바로 연다)
+    @Published var recordsSection: RecordsView.Section = MainWindow.initialRecordsSection
+    /// 설정 탭에서 보고 있는 구역 (권한 안내가 일반으로 바로 연다)
+    @Published var settingsSection: SettingsView.Section = .general
+    /// 업무 드로어(창 왼쪽 업무 목록)에서 고른 업무와 상세가 펼쳐졌는지. 업무 목록에서 눌러도, 그래프에서 눌러도 같은 드로어가 열린다
+    @Published var selectedTaskId: Int64?
+    @Published var taskDetailOpen = false
     /// 파일 정리 제안. 대기 중인 것이 앞에 온다.
     @Published var fileSuggestions: [FileSuggestion] = []
     @Published var fileError: String?
@@ -413,7 +420,7 @@ final class AppState: ObservableObject {
                 // 로그아웃·연결 변경·중단으로 끝난 검사는 이전 결과를 덮어쓰지 않는다.
             } catch {
                 guard codexModelTaskID == id, !Task.isCancelled else { return }
-                let message = "모델 확인 실패: \((error as? LLMError)?.description ?? error.localizedDescription)"
+                let message = "모델 확인 실패: \(Self.friendlyModelError((error as? LLMError)?.description ?? error.localizedDescription))"
                 if checkBatch { codexModelsError = message }
                 if checkChat { chatCodexModelsError = message }
             }
@@ -422,11 +429,37 @@ final class AppState: ObservableObject {
         await withTaskCancellationHandler { await task.value } onCancel: { task.cancel() }
     }
 
+    /// 서버 원문(HTTP 429 JSON 등)을 사람이 읽을 한 줄로 바꾼다
+    static func friendlyModelError(_ raw: String) -> String {
+        if raw.contains("usage_limit_reached") || raw.contains("HTTP 429") {
+            guard let r = raw.range(of: #""resets_in_seconds":\s*(\d+)"#, options: .regularExpression),
+                  let secs = Int(raw[r].filter(\.isNumber)) else { return "사용량 한도에 도달했어요" }
+            let d = secs / 86400, h = secs % 86400 / 3600
+            return "사용량 한도에 도달했어요. \(d > 0 ? "\(d)일 " : "")\(h)시간 뒤 다시 쓸 수 있어요"
+        }
+        if raw.contains("HTTP 401") || raw.contains("HTTP 403") { return "다시 로그인해야 해요" }
+        if raw.contains("HTTP 5") { return "서버가 잠시 응답하지 않아요" }
+        let line = raw.split(separator: "\n").first.map(String.init) ?? raw
+        return line.count > 80 ? String(line.prefix(80)) + "…" : line
+    }
+
     private func verificationError(_ result: CodexModelVerification, empty: String) -> String? {
         if !result.failures.isEmpty {
-            return result.failures.map { "\($0.model.displayName): \($0.message)" }.joined(separator: "\n")
+            return result.failures.map { "\($0.model.displayName): \(Self.friendlyModelError($0.message))" }.joined(separator: "\n")
         }
         return result.models.isEmpty ? empty : nil
+    }
+
+    /// 기록 자료의 파일 구역으로 (메뉴 막대 파일 줄, 알림 '열기')
+    func openFileSuggestions() {
+        selectedTab = .records
+        recordsSection = .files
+    }
+
+    /// 설정의 일반 구역으로 (권한·알림 꺼짐 안내)
+    func openGeneralSettings() {
+        selectedTab = .settings
+        settingsSection = .general
     }
 
     func cancelCodexModelLoading(clear: Bool = false) {
@@ -521,7 +554,7 @@ final class AppState: ObservableObject {
             }
             break
         }
-        if applied { graphVersion += 1; refreshTasks(); chat?.projects.check() }
+        if applied { graphVersion += 1; refreshTasks() }
         refresh()
     }
 

@@ -111,6 +111,7 @@ public struct TaskMerger: Sendable {
         guard !pending.contains("task:\(keep.id)") else { return 0 }
         var accumulated = keep.props
         var merged = 0
+        var mergedKeys: [String] = []
         for key in group.merge {
             guard let victim = try tx.node(label: NodeLabel.task, key: key), victim.id != keep.id else { continue }
             guard !pending.contains("task:\(victim.id)") else { continue }
@@ -153,6 +154,7 @@ public struct TaskMerger: Sendable {
             try conn.execute(sql: "DELETE FROM edges WHERE src = ? OR dst = ?", arguments: [victim.id, victim.id])
             try conn.execute(sql: "DELETE FROM nodes WHERE id = ?", arguments: [victim.id])
             merged += 1
+            mergedKeys.append(victim.key)
         }
         if let title = group.title?.trimmingCharacters(in: .whitespacesAndNewlines), !title.isEmpty, title != keep.title {
             try tx.upsertNode(label: NodeLabel.task, key: keep.key, subtype: nil, title: title, props: [:], at: now)
@@ -161,6 +163,7 @@ public struct TaskMerger: Sendable {
             try tx.setProps(nodeId: keep.id, ["goal": .string(goal)], at: now)
         }
         if merged > 0 {
+            try ChatStore.moveFocus(from: mergedKeys, to: keep.key, title: try tx.node(label: NodeLabel.task, key: keep.key)?.title ?? keep.title, conn)
             try tx.rebindProjects(at: now)
             try ThemeGraph.pruneEmpty(tx)
         }

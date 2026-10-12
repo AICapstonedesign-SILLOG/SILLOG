@@ -92,17 +92,17 @@ struct RecordingDetailView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            LibrarySheetHeader(eyebrow: "RECORDING", title: recording.displayTitle, detail: RecordingDetail.when(recording)) { dismiss() }
+            LibrarySheetHeader(title: recording.displayTitle, detail: RecordingDetail.when(recording)) { dismiss() }
             VStack(alignment: .leading, spacing: 8) {
                 if let notice = RecordingDetail.notice(recording, textExists: textExists) {
                     Text(notice).font(Brand.suit(12)).foregroundStyle(Brand.ink).fixedSize(horizontal: false, vertical: true)
                 }
                 if let summary = recording.summary, !summary.isEmpty {
-                    Eyebrow("SUMMARY")
+                    Eyebrow("요약")
                     Text(summary).font(Brand.suit(12)).foregroundStyle(Brand.tabText).textSelection(.enabled)
                         .fixedSize(horizontal: false, vertical: true)
                 }
-                Eyebrow("TRANSCRIPT").padding(.top, 6)
+                Eyebrow("받아쓴 글").padding(.top, 6)
             }
             .padding(.horizontal, 27).padding(.top, 18)
             .frame(maxWidth: .infinity, alignment: .leading)
