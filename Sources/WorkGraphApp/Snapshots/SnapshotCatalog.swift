@@ -109,10 +109,10 @@ enum SnapshotCatalog {
                 s.phase = .ready; s.status = collector(); s.taskList = recentTasks
                 s.selectedTab = .settings; s.settingsSection = .ai
             },
-            // 기록 자료: 활동 로그는 대기와 정리 묶음을 한 줄기로
+            // 설정의 활동 로그: 대기와 정리 묶음을 한 줄기로
             shot("LG-01", MainWindow(), size: window) { s in
                 s.phase = .ready; s.status = collector(); s.taskList = recentTasks
-                s.selectedTab = .records; s.recordsSection = .activity
+                s.selectedTab = .settings; s.settingsSection = .activity
             },
         ]
     }

@@ -4,7 +4,7 @@ import SwiftUI
 import WorkGraphCollectors
 import WorkGraphCore
 
-/// 설정 탭: 위쪽 글자 탭(일반, AI 연결)과 그 아래 한 쪽. 일반은 권한, 수집, 개인정보와 저장 공간, 앱 실행을 한 쪽에 잇는다. Figma ST-01~06, ST-W1~W8.
+/// 설정 탭: 위쪽 글자 탭(일반, AI 연결, 활동 로그)과 그 아래 한 쪽. 일반은 권한, 수집, 개인정보와 저장 공간, 앱 실행을 한 쪽에 잇는다. Figma ST-01~06, ST-W1~W8.
 struct SettingsView: View {
     @EnvironmentObject private var state: AppState
     @State private var launchAtLogin = false
@@ -15,19 +15,24 @@ struct SettingsView: View {
     enum Section: String, CaseIterable, Identifiable {
         case general = "일반"                            // 권한, 수집, 개인정보와 저장 공간, 앱 실행
         case ai = "AI 연결"
+        case activity = "활동 로그"                       // 무엇을 기록하고 언제 정리했는지 (수집 설정 가까이)
         var id: String { rawValue }
     }
 
     var body: some View {
         VStack(spacing: 0) {
             TextTabs(selection: $state.settingsSection)
-            ScrollView {
-                content
-                    .padding(.horizontal, 34)
-                    .padding(.bottom, 40)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+            if state.settingsSection == .activity {
+                ActivityLogView().frame(maxWidth: .infinity, maxHeight: .infinity)   // 자기 표와 스크롤이 있다
+            } else {
+                ScrollView {
+                    content
+                        .padding(.horizontal, 34)
+                        .padding(.bottom, 40)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .background(.white)
             }
-            .background(.white)
         }
         .onChange(of: state.settings) { _, _ in state.applySettings() }
         .onChange(of: state.settings.llmProvider) { _, _ in state.updateCodexModelProviders() }
@@ -46,6 +51,7 @@ struct SettingsView: View {
         switch state.settingsSection {
         case .general: general
         case .ai: aiConnection
+        case .activity: EmptyView()                      // 위에서 따로 그린다
         }
     }
 

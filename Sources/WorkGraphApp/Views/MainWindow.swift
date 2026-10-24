@@ -225,10 +225,10 @@ struct TasksPanel: View {
     }
 }
 
-/// 기록 자료 탭: 위쪽 글자 탭(파일 · 보관함 · 활동 로그)과 고른 구역
+/// 기록 자료 탭: 위쪽 글자 탭(파일 · 보관함)과 고른 구역. 활동 로그는 설정의 세 번째 탭
 struct RecordsView: View {
     enum Section: String, CaseIterable, Identifiable {
-        case files = "파일", library = "보관함", activity = "활동 로그"
+        case files = "파일", library = "보관함"
         var id: String { rawValue }
     }
 
@@ -241,7 +241,6 @@ struct RecordsView: View {
                 switch state.recordsSection {
                 case .files: FilesView()
                 case .library: if let chat = state.chat { LibraryView(library: chat.library) } else { Color.white }
-                case .activity: ActivityLogView()
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -316,23 +315,19 @@ struct MainWindow: View {
     }
 
     @EnvironmentObject private var state: AppState
-    /// WORKGRAPH_TAB=chat|records|files|library|activity|settings 로 시작 탭을 고를 수 있다 (개발·스크린샷용).
+    /// WORKGRAPH_TAB=chat|records|files|library|settings|activity 로 시작 탭을 고를 수 있다 (개발·스크린샷용).
     static let initialTab: Tab = {
         switch ProcessInfo.processInfo.environment["WORKGRAPH_TAB"] {
-        case "settings": return .settings
+        case "settings", "activity": return .settings
         case "chat": return .chat
-        case "records", "files", "library", "activity": return .records
+        case "records", "files", "library": return .records
         default: return .graph                                   // 권한·로그인 안내는 온보딩이 맡는다
         }
     }()
-    /// WORKGRAPH_TAB=library|activity 면 기록 자료의 그 구역으로 시작한다
-    static let initialRecordsSection: RecordsView.Section = {
-        switch ProcessInfo.processInfo.environment["WORKGRAPH_TAB"] {
-        case "library": return .library
-        case "activity": return .activity
-        default: return .files
-        }
-    }()
+    /// WORKGRAPH_TAB=library 면 기록 자료의 보관함으로 시작한다
+    static let initialRecordsSection: RecordsView.Section = ProcessInfo.processInfo.environment["WORKGRAPH_TAB"] == "library" ? .library : .files
+    /// WORKGRAPH_TAB=activity 면 설정의 활동 로그로 시작한다
+    static let initialSettingsSection: SettingsView.Section = ProcessInfo.processInfo.environment["WORKGRAPH_TAB"] == "activity" ? .activity : .general
 
     private var ready: Bool { state.startupError == nil && state.bootstrapped && state.phase == .ready }
     /// 기기 코드 로그인이 꺼진 계정: 탭 대신 OUT-W1 카드

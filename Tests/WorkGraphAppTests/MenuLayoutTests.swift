@@ -169,17 +169,23 @@ final class MenuLayoutTests: XCTestCase {
         XCTAssertGreaterThan(full.fittingSize.width, TasksPanel.listWidth + 100, "펼치면 상세까지")
     }
 
-    func testRecordsHasFilesLibraryAndActivityTabsOnTop() {
+    func testRecordsHasFilesAndLibraryTabsOnTop() {
         let text = text(of: MainWindow()) { s in s.selectedTab = .records; s.recordsSection = .files }
-        for tab in ["파일", "보관함", "활동로그"] {
+        for tab in ["파일", "보관함"] {
             XCTAssertTrue(text.contains(tab), "\(tab) 탭이 보여야 한다: \(text)")
         }
+        XCTAssertFalse(text.contains("활동로그"), "활동 로그는 설정으로 옮겼다: \(text)")
         XCTAssertTrue(text.contains("정리할파일이없어요"), "고른 구역(파일)의 내용: \(text)")
     }
 
-    func testRecordsShowsTheChosenSection() {
-        let text = text(of: MainWindow()) { s in s.selectedTab = .records; s.recordsSection = .activity }
-        XCTAssertTrue(text.contains("아직수집한기록이없어요"), "활동 로그 구역: \(text)")
+    // 활동 로그는 설정의 세 번째 탭: 무엇을 기록하고 언제 정리했는지 (수집 설정 가까이)
+    func testSettingsShowsTheActivityLogAsItsThirdTab() {
+        let text = text(of: MainWindow()) { s in s.selectedTab = .settings; s.settingsSection = .activity }
+        for tab in ["일반", "연결", "활동로그"] {                                       // 'AI' 를 'Al' 로 읽기도 한다
+            XCTAssertTrue(text.contains(tab), "\(tab) 탭이 보여야 한다: \(text)")
+        }
+        XCTAssertTrue(text.contains("아직수집한기록이없어요"), "활동 로그 내용: \(text)")
+        XCTAssertEqual(SettingsView.Section.allCases.map(\.rawValue), ["일반", "AI 연결", "활동 로그"])
     }
 
     func testSettingsHasGeneralAndAIConnectionTabsOnTop() {
@@ -209,7 +215,7 @@ final class MenuLayoutTests: XCTestCase {
     }
 
     func testOpeningFileSuggestionsGoesToTheFilesSection() {
-        let state = AppState(preview: { s in s.phase = .ready; s.selectedTab = .graph; s.recordsSection = .activity })
+        let state = AppState(preview: { s in s.phase = .ready; s.selectedTab = .graph; s.recordsSection = .library })
         state.openFileSuggestions()
         XCTAssertEqual(state.selectedTab, .records)
         XCTAssertEqual(state.recordsSection, .files)

@@ -36,7 +36,7 @@ final class AppState: ObservableObject {
     /// 기록 자료 탭에서 보고 있는 구역 (메뉴 막대·알림이 파일 구역으로 바로 연다)
     @Published var recordsSection: RecordsView.Section = MainWindow.initialRecordsSection
     /// 설정 탭에서 보고 있는 구역 (권한 안내가 일반으로 바로 연다)
-    @Published var settingsSection: SettingsView.Section = .general
+    @Published var settingsSection: SettingsView.Section = MainWindow.initialSettingsSection
     /// 업무 드로어(창 왼쪽 업무 목록)에서 고른 업무와 상세가 펼쳐졌는지. 업무 목록에서 눌러도, 그래프에서 눌러도 같은 드로어가 열린다
     @Published var selectedTaskId: Int64?
     @Published var taskDetailOpen = false
