@@ -14,6 +14,16 @@ final class TranscriptCollectorTests: XCTestCase {
         XCTAssertEqual(collector.finish(), ["오늘은 연결 리스트를 봅니다.", "노드는 값을 가집니다."])
     }
 
+    // 다시 시작할 자리를 정하려고: 마지막 발화가 끝난 시각 (끝나지 않은 발화를 붙였으면 그 시각)
+    func testItTellsWhenTheLastUtteranceEnded() {
+        var collector = TranscriptCollector(duration: 100)
+        collector.add(text: "첫 문장.", utteranceEnded: true, isFinal: false, lastWordEnd: 10)
+        XCTAssertEqual(collector.lastEnd, 10)
+        collector.add(text: "끝나지 않은 말", utteranceEnded: false, isFinal: false, lastWordEnd: 24)
+        _ = collector.finish()
+        XCTAssertEqual(collector.lastEnd, 24)
+    }
+
     func testAnUnfinishedUtteranceIsKeptWhenTheFileEnds() {
         var collector = TranscriptCollector(duration: 100)
         collector.add(text: "첫 문장.", utteranceEnded: true, isFinal: false, lastWordEnd: 10)

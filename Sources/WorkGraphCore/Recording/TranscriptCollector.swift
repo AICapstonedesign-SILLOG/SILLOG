@@ -7,8 +7,9 @@ public struct TranscriptCollector: Sendable {
     public private(set) var utterances: [String] = []
     /// 0~0.99 (끝까지 받으면 1)
     public private(set) var progress: Double = 0
+    /// 마지막으로 모은 발화가 끝난 시각 (초, 모르면 0). 인식기가 일찍 끝냈을 때 다시 시작할 자리 (ResumingTranscription)
+    public private(set) var lastEnd: Double = 0
     private var pending = ""
-    private var lastEnd: Double = 0
     private var pendingEnd: Double = 0
     private let duration: Double
 
@@ -41,7 +42,7 @@ public struct TranscriptCollector: Sendable {
 
     /// 끝까지 받은 뒤: 끝나지 않은 발화도 붙인다
     public mutating func finish() -> [String] {
-        if !pending.isEmpty, !isRedelivery(pending, end: pendingEnd) { utterances.append(pending) }
+        if !pending.isEmpty, !isRedelivery(pending, end: pendingEnd) { utterances.append(pending); lastEnd = max(lastEnd, pendingEnd) }
         pending = ""
         progress = 1
         return utterances

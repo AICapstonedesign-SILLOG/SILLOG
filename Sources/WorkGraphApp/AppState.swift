@@ -88,6 +88,8 @@ final class AppState: ObservableObject {
     var folderIndexTask: Task<FolderIndex, Never>?
     var recordingPipeline: RecordingPipeline?
     var recorder: any AudioRecording = VoiceRecorder()
+    /// 녹음 중 미리 받아쓰기 (실제 앱에서만. 미리보기·시험은 직접 넣는다): 정리할 때 이 글을 쓰고, 없으면 파일 전체를 받아쓴다
+    var liveTranscriptions: LiveTranscriptions?
     var recordingPermissions: any RecordingPermissions = SystemRecordingPermissions()
     var recordingQueue: Task<Void, Never>?
     /// 차례를 기다리거나 정리 중인 녹음 id (같은 녹음을 두 번 넣지 않게)
@@ -297,10 +299,15 @@ final class AppState: ObservableObject {
         settings.llmProvider == "openai" ? makeOpenAIClient() : CodexResponsesClient(auth: codexAuth, model: settings.codexModel, reasoningEffort: "low")
     }
 
-    /// 녹음 정리: 기기 안 받아쓰기, 제목은 빠른 모델, 받아쓴 글은 ~/Documents/Sillog 녹음
+    /// 녹음 정리: 기기 안 받아쓰기(녹음 중 미리 받아쓴 Whisper 글, 없으면 파일 전체를 Whisper 로, 못 쓰면 애플 음성 인식),
+    /// 제목은 빠른 모델, 받아쓴 글은 ~/Documents/Sillog 녹음. 미리 받아쓰기는 설정을 바꿔 다시 만들어도 녹음 중인 것을 잃지 않게 하나만 둔다
     private func makeRecordingPipeline(_ database: WGDatabase) -> RecordingPipeline {
-        RecordingPipeline(db: database, transcriber: SpeechTranscriber(), llm: makeQuickClient(),
-                          textFolder: RecordingPipeline.defaultTextFolder(home: NSHomeDirectory()))
+        let live = liveTranscriptions ?? LiveTranscriptions(prewarm: { await WhisperEngine.shared.prewarm() }) { samples in
+            try await WhisperEngine.shared.transcribe(samples: samples)
+        }
+        liveTranscriptions = live
+        return RecordingPipeline(db: database, transcriber: LiveFirstTranscriber(live: live, fallback: WhisperTranscriber()), llm: makeQuickClient(),
+                                 textFolder: RecordingPipeline.defaultTextFolder(home: NSHomeDirectory()))
     }
 
     /// Args: 없음.

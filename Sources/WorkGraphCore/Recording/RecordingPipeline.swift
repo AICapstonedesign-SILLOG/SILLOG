@@ -102,7 +102,7 @@ public struct RecordingPipeline: Sendable {
                 let utterances = try await transcriber.transcribe(audio: audio, duration: recording.duration) { progress in
                     if gate.advance(to: progress) { onStep(.transcribing(progress)) }
                 }
-                let lines = utterances.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
+                let lines = TranscriptCleanup.clean(utterances)
                 recording.transcript = lines.joined(separator: "\n")
                 recording.error = nil
                 try store.update(recording)

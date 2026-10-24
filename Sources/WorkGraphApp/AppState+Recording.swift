@@ -43,9 +43,12 @@ extension AppState {
             let url = db.recordingsDirectory.appendingPathComponent("\(id).m4a")
             recording.audioPath = url.path
             try store.update(recording)
+            var samples: (@Sendable ([Float]) -> Void)?
+            if let session = liveTranscriptions?.begin(audio: url) { samples = { session.append($0) } }
             do {
-                try recorder.start(to: url)
+                try recorder.start(to: url, samples: samples)
             } catch {
+                liveTranscriptions?.discard(url)
                 try? store.delete(id: id)
                 throw error
             }
@@ -196,6 +199,7 @@ extension AppState {
             if duration == 0 {
                 recording.status = .failed
                 recording.error = Self.stoppedRecordingMessage
+                liveTranscriptions?.discard(URL(fileURLWithPath: recording.audioPath))
             } else {
                 recording.status = .transcribing
             }
@@ -234,6 +238,9 @@ extension AppState {
         }
         recordingStepToken += 1                                             // 늦게 온 단계 알림은 버린다
         recordingWork = nil
+        if let db, let path = try? RecordingStore(db).find(id: id)?.audioPath {
+            liveTranscriptions?.discard(URL(fileURLWithPath: path))       // 받아쓰기를 건너뛴 녹음(1초 미만)의 미리 받아쓰기
+        }
         refreshRecordings()
     }
 

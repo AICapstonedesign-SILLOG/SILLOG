@@ -11,6 +11,10 @@ enum AppEntry {
         if let directory = ProcessInfo.processInfo.environment["WORKGRAPH_SNAPSHOT"], !directory.isEmpty {
             MainActor.assumeIsolated { SnapshotRunner.run(into: directory) }
         }
+        // 개발용: 녹음 파일 하나를 앱과 같은 방식으로 받아쓰며 인식기 결과를 하나하나 적고 끝난다 (TranscribeTrace)
+        if let spec = ProcessInfo.processInfo.environment["WORKGRAPH_TRANSCRIBE_TRACE"], !spec.isEmpty {
+            TranscribeTrace.run(spec)
+        }
         let fonts = BrandFonts.register()
         if fonts.count < 6 { AppLog.write("글꼴 \(fonts.count)/6개만 등록됨: \(fonts.sorted())") }
         MenuBarPlacement.preferRightSide(.standard)

@@ -120,6 +120,15 @@ final class RecordingPipelineTests: XCTestCase {
         XCTAssertEqual(saved.title, "녹음 2026-10-10 15-32")
     }
 
+    func testMadeUpRepeatsAreLeftOutOfTheSavedText() async throws {
+        let item = try finished()
+        let llm = StubLLM([.success(naming)])
+        let loop = ["오늘은 연결 리스트를 봅니다.", "-"] + Array(repeating: "최선은", count: 12) + ["노드는 값과 포인터를 가집니다."]
+        let outcome = try await pipeline(FakeTranscriber([.success(loop)]), llm).process(id: item.id!)
+        guard case .ready(let saved) = outcome else { return XCTFail("\(outcome)") }
+        XCTAssertEqual(saved.transcript, "오늘은 연결 리스트를 봅니다.\n최선은\n노드는 값과 포인터를 가집니다.")
+    }
+
     func testASilentRecordingMakesNoTextFile() async throws {
         let item = try finished()
         let llm = StubLLM([])

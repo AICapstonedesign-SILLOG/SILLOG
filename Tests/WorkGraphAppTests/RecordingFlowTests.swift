@@ -10,12 +10,15 @@ final class FakeRecorder: AudioRecording {
     let seconds: Double
     private(set) var startedURL: URL?
     private(set) var stopped = false
+    /// 녹음 중 미리 받아쓰기로 흘려보내는 곳 (녹음기가 받는 것)
+    private(set) var samples: (@Sendable ([Float]) -> Void)?
     init(seconds: Double) { self.seconds = seconds }
 
-    func start(to url: URL) throws {
+    func start(to url: URL, samples: (@Sendable ([Float]) -> Void)?) throws {
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         try Data("fake audio".utf8).write(to: url)
         startedURL = url
+        self.samples = samples
     }
 
     func stop() -> Double { stopped = true; return seconds }
@@ -88,6 +91,32 @@ final class RecordingFlowTests: XCTestCase {
         buffer.frameLength = frames
         let file = try AVAudioFile(forWriting: url, settings: format.settings)
         try file.write(from: buffer)
+    }
+
+    // 녹음 중 미리 받아쓰기: 녹음기가 흘려보낸 소리를 조각마다 받아써 두었다가, 끝나면 그 글로 정리한다 (파일 전체는 다시 받아쓰지 않음)
+    func testTheTextComesFromWhatWasTranscribedWhileRecording() async throws {
+        let whole = FakeTranscriber(.success(["파일 전체를 받아씀"]))
+        let db = try WGDatabase.inMemory()
+        addTeardownBlock { try? FileManager.default.removeItem(at: db.recordingsDirectory) }
+        let recorder = FakeRecorder(seconds: 45)
+        let live = LiveTranscriptions { samples in ["\(samples.count / 16_000)초를 미리 받아씀"] }
+        let state = AppState(preview: { s in
+            s.phase = .ready
+            s.recorder = recorder
+            s.recordingPermissions = FakePermissions(problem: nil)
+            s.liveTranscriptions = live
+            s.recordingPipeline = RecordingPipeline(db: db, transcriber: LiveFirstTranscriber(live: live, fallback: whole), llm: NamingLLM(),
+                                                    textFolder: folder.appendingPathComponent("Sillog 녹음"))
+        }, database: db)
+        await state.startRecording()
+        let id = try XCTUnwrap(state.activeRecording?.id)
+        let sink = try XCTUnwrap(recorder.samples, "녹음기가 미리 받아쓰기로 소리를 흘려보낼 곳을 받는다")
+        for _ in 0..<90 { sink([Float](repeating: 0.1, count: 8_000)) }      // 45초
+        await state.stopRecording()
+        let saved = try XCTUnwrap(RecordingStore(db).find(id: id))
+        XCTAssertEqual(saved.status, .ready)
+        XCTAssertTrue(saved.transcript.contains("미리 받아씀"), saved.transcript)
+        XCTAssertEqual(whole.calls, 0, "파일 전체는 다시 받아쓰지 않는다")
     }
 
     func testStartAndStopTranscribesNamesAndSavesTheText() async throws {
