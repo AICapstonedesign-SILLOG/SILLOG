@@ -31,6 +31,8 @@ cp -R "$ROOT/Sources/WorkGraphApp/Resources/graph" "$APP/Contents/Resources/grap
 cp -R "$ROOT/Sources/WorkGraphApp/Resources/PluginIcons" "$APP/Contents/Resources/PluginIcons"
 cp -R "$ROOT/Sources/WorkGraphApp/Resources/Brand" "$APP/Contents/Resources/Brand"
 cp -R "$BIN_DIR/WorkGraph_WorkGraphCore.bundle" "$APP/Contents/Resources/"
+cp -R "$BIN_DIR/SwiftMath_SwiftMath.bundle" "$APP/Contents/Resources/"    # 채팅 수식 글꼴 (없으면 수식을 그릴 때 앱이 멈춘다)
+chmod -R u+w "$APP/Contents/Resources/SwiftMath_SwiftMath.bundle"                    # 패키지 체크아웃에서 읽기 전용으로 오므로 서명 전 xattr 정리가 되게
 [ -f "$ROOT/Sources/WorkGraphApp/Resources/AppIcon.icns" ] || swift "$ROOT/scripts/make-icon.swift" "$ROOT/Sources/WorkGraphApp/Resources/AppIcon.icns"
 cp "$ROOT/Sources/WorkGraphApp/Resources/AppIcon.icns" "$APP/Contents/Resources/AppIcon.icns"
 
@@ -50,6 +52,9 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
   <key>CFBundleIconFile</key><string>AppIcon</string>
   <key>NSHighResolutionCapable</key><true/>
   <key>NSDownloadsFolderUsageDescription</key><string>새로 내려받은 파일을 하던 업무와 연결해 기록합니다.</string>
+  <key>NSMicrophoneUsageDescription</key><string>메뉴 막대에서 녹음할 때 마이크 소리를 녹음합니다.</string>
+  <key>NSSpeechRecognitionUsageDescription</key><string>녹음한 말을 이 Mac 안에서 글로 받아씁니다.</string>
+  <key>NSDocumentsFolderUsageDescription</key><string>받아쓴 녹음을 문서 폴더의 'Sillog 녹음'에 저장합니다.</string>
   <key>NSAppTransportSecurity</key>
   <dict>
     <key>NSAllowsLocalNetworking</key><true/>

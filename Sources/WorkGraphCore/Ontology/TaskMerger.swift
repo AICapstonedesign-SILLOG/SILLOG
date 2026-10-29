@@ -111,6 +111,7 @@ public struct TaskMerger: Sendable {
         guard !pending.contains("task:\(keep.id)") else { return 0 }
         var accumulated = keep.props
         var merged = 0
+        var mergedKeys: [String] = []
         for key in group.merge {
             guard let victim = try tx.node(label: NodeLabel.task, key: key), victim.id != keep.id else { continue }
             guard !pending.contains("task:\(victim.id)") else { continue }
@@ -126,6 +127,7 @@ public struct TaskMerger: Sendable {
             // 행 판단
             try conn.execute(sql: "UPDATE observations SET task_id = ? WHERE task_id = ?", arguments: [keep.id, victim.id])
             try conn.execute(sql: "UPDATE chat_messages SET task_id = ? WHERE task_id = ?", arguments: [keep.id, victim.id])
+            try conn.execute(sql: "UPDATE recordings SET task_id = ? WHERE task_id = ?", arguments: [keep.id, victim.id])
             // 세션, 나중에 할 일 → 남길 업무로. 주제는 겹치지 않는 것만
             try conn.execute(sql: "UPDATE edges SET dst = ? WHERE dst = ? AND type IN ('PART_OF', 'FOR')", arguments: [keep.id, victim.id])
             for edge in try tx.edges(from: victim.id, type: EdgeType.about) {
@@ -152,6 +154,7 @@ public struct TaskMerger: Sendable {
             try conn.execute(sql: "DELETE FROM edges WHERE src = ? OR dst = ?", arguments: [victim.id, victim.id])
             try conn.execute(sql: "DELETE FROM nodes WHERE id = ?", arguments: [victim.id])
             merged += 1
+            mergedKeys.append(victim.key)
         }
         if let title = group.title?.trimmingCharacters(in: .whitespacesAndNewlines), !title.isEmpty, title != keep.title {
             try tx.upsertNode(label: NodeLabel.task, key: keep.key, subtype: nil, title: title, props: [:], at: now)
@@ -160,6 +163,7 @@ public struct TaskMerger: Sendable {
             try tx.setProps(nodeId: keep.id, ["goal": .string(goal)], at: now)
         }
         if merged > 0 {
+            try ChatStore.moveFocus(from: mergedKeys, to: keep.key, title: try tx.node(label: NodeLabel.task, key: keep.key)?.title ?? keep.title, conn)
             try tx.rebindProjects(at: now)
             try ThemeGraph.pruneEmpty(tx)
         }
@@ -172,6 +176,7 @@ public struct TaskMerger: Sendable {
         guard let task = try tx.node(label: NodeLabel.task, key: key) else { return false }
         try conn.execute(sql: "UPDATE observations SET task_id = NULL, off_task = 1, resource_relevant = 0 WHERE task_id = ?", arguments: [task.id])
         try conn.execute(sql: "UPDATE chat_messages SET task_id = NULL WHERE task_id = ?", arguments: [task.id])
+        try conn.execute(sql: "UPDATE recordings SET task_id = NULL WHERE task_id = ?", arguments: [task.id])
         let sessions = try Int64.fetchAll(conn, sql: "SELECT src FROM edges WHERE dst = ? AND type = ?", arguments: [task.id, EdgeType.partOf])
         let laterItems = try Int64.fetchAll(conn, sql: "SELECT src FROM edges WHERE dst = ? AND type = ?", arguments: [task.id, EdgeType.forTask])
         var leftovers = try Int64.fetchAll(conn, sql: "SELECT dst FROM edges WHERE src = ? AND type = ?", arguments: [task.id, EdgeType.about])

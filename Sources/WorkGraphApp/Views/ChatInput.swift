@@ -6,6 +6,8 @@ struct ChatInput: NSViewRepresentable {
     @Binding var text: String
     @Binding var height: CGFloat
     var minimumHeight: CGFloat = 56
+    /// 바뀌면 입력칸으로 커서를 옮긴다 (범위를 고른 직후 바로 쓰게)
+    var focusRequest = 0
     var onSend: () -> Void
 
     /// Args: context는 SwiftUI 연결 상태이다.
@@ -37,6 +39,10 @@ struct ChatInput: NSViewRepresentable {
         context.coordinator.parent = self; editor.onSend = onSend
         if editor.string != text, !editor.hasMarkedText() { editor.string = text }
         context.coordinator.resize(editor)
+        if context.coordinator.focusRequest != focusRequest {
+            context.coordinator.focusRequest = focusRequest
+            DispatchQueue.main.async { editor.window?.makeFirstResponder(editor) }
+        }
     }
 
     /// Args: 없음.
@@ -46,6 +52,8 @@ struct ChatInput: NSViewRepresentable {
 
     final class Coordinator: NSObject, NSTextViewDelegate {
         var parent: ChatInput
+        /// 처리한 커서 요청. 0 에서 시작해, 업무 드로어에서 범위를 골라 채팅 탭이 새로 그려질 때도 커서가 입력칸으로 간다
+        var focusRequest = 0
         /// Args: parent는 입력 바인딩이다.
         /// Returns: 입력 상태 연결 객체.
         /// Raises: 없음.

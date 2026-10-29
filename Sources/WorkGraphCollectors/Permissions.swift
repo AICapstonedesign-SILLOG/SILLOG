@@ -10,6 +10,8 @@ public enum Permissions {
         case accessibility = "Privacy_Accessibility"
         case screenRecording = "Privacy_ScreenCapture"
         case filesAndFolders = "Privacy_FilesAndFolders"
+        case microphone = "Privacy_Microphone"
+        case speechRecognition = "Privacy_SpeechRecognition"
     }
 
     /// 손쉬운 사용(접근성): 창 제목, URL, 문서 경로, 화면 텍스트에 필요.
@@ -42,9 +44,14 @@ public enum Permissions {
         }
     }
 
+    public static func settingsURL(_ pane: Pane) -> URL? {
+        URL(string: "x-apple.systempreferences:com.apple.preference.security?\(pane.rawValue)")
+    }
+
+    /// 시스템 설정 → 키보드 (받아쓰기 켜기는 이 화면 아래쪽에 있다)
+    public static let dictationSettingsURL = URL(string: "x-apple.systempreferences:com.apple.Keyboard-Settings.extension")
+
     public static func openSettings(_ pane: Pane) {
-        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?\(pane.rawValue)") {
-            NSWorkspace.shared.open(url)
-        }
+        if let url = settingsURL(pane) { NSWorkspace.shared.open(url) }
     }
 }

@@ -4,7 +4,7 @@ import XCTest
 @testable import WorkGraphApp
 import WorkGraphCore
 
-/// 활동 로그 정리 기록: 정리가 많이 쌓여도 아래 LLM 교환 카드는 제자리에 있고 위 목록만 스크롤된다
+/// 활동 로그 한 줄기: 대기 기록 아래로 정리 묶음이 최신부터. 정리를 누르면 보낸 내용과 받은 응답 시트
 @MainActor
 final class ActivityLogLayoutTests: XCTestCase {
     private func show<V: View>(_ view: V, _ state: AppState) -> NSWindow {
@@ -27,18 +27,30 @@ final class ActivityLogLayoutTests: XCTestCase {
         }
     }
 
-    func testBatchCardStaysOnScreenWhenTheListIsLong() {
+    func testTheNewestBatchIsOnTopWhenTheListIsLong() {
         let state = AppState(preview: { s in s.phase = .ready; s.batches = self.manyBatches(120) })
-        let window = show(ActivityLogView(section: .batches), state)
+        let window = show(ActivityLogView(), state)
         let text = OnboardingOverlayTests.recognizedText(window.contentView!).filter { !$0.isWhitespace }
-        XCTAssertTrue(text.contains("정리#120"), "정리 120번이 쌓여도 맨 위(최신) 정리의 카드가 창 안에 보여야 한다: \(text.suffix(300))")
+        XCTAssertTrue(text.contains("대기"), "맨 위는 아직 보내지 않은 기록: \(text.prefix(300))")
+        XCTAssertTrue(text.contains("정리#120"), "정리 120번이 쌓여도 최신 정리가 대기 바로 아래 보여야 한다: \(text.prefix(300))")
     }
 
-    func testBatchCardShowsAppliedResultInWords() {
-        let state = AppState(preview: { s in s.phase = .ready; s.batches = self.manyBatches(3) })
-        let window = show(ActivityLogView(section: .batches), state)
+    func testBatchSheetShowsAppliedResultInWords() {
+        let state = AppState(preview: { s in s.phase = .ready })
+        let window = show(BatchDetail(batch: manyBatches(1)[0]), state)
         let text = OnboardingOverlayTests.recognizedText(window.contentView!).filter { !$0.isWhitespace }
-        XCTAssertTrue(text.contains("세션1개,새업무0개,자료2개"), "반영 결과는 JSON 이 아니라 Figma 처럼 말로: \(text.suffix(300))")
+        XCTAssertTrue(text.contains("세션1개,새업무0개,자료2개"), "반영 결과는 JSON 이 아니라 Figma 처럼 말로: \(text.prefix(300))")
         XCTAssertFalse(text.contains("sessionsExtended"))
+    }
+
+    func testFailedBatchSaysTheErrorInOneLine() {
+        var failed = manyBatches(1)[0]
+        failed.status = "error"
+        failed.error = #"HTTP 429: {"error":{"type":"usage_limit_reached","resets_in_seconds": 7200}}"#
+        let state = AppState(preview: { s in s.phase = .ready; s.batches = [failed] })
+        let window = show(ActivityLogView(), state)
+        let text = OnboardingOverlayTests.recognizedText(window.contentView!).filter { !$0.isWhitespace }
+        XCTAssertTrue(text.contains("사용량한도에도달했어요"), "서버 원문 대신 한 줄 안내: \(text.prefix(400))")
+        XCTAssertFalse(text.contains("usage_limit_reached"), text)
     }
 }

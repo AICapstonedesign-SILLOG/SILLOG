@@ -28,10 +28,13 @@ public final class ContextSampler: @unchecked Sendable {
 
     public func sample(enableWebAccessibility: Bool) -> ContextSnapshot? {
         guard let app = NSWorkspace.shared.frontmostApplication else { return nil }
-        let bundle = app.bundleIdentifier ?? "unknown.\(app.localizedName ?? "app")"
+        // 실록 자신은 번들 ID 가 없어도 프로세스 번호로 알아보고, PrivacyFilter 가 제외하는 이름을 붙인다
+        let isSelf = app.processIdentifier == ProcessInfo.processInfo.processIdentifier
+        let bundle = isSelf ? PrivacyFilter.selfBundle : (app.bundleIdentifier ?? "unknown.\(app.localizedName ?? "app")")
         var snapshot = ContextSnapshot(appBundle: bundle, appName: app.localizedName ?? bundle, windowTitle: nil,
                                        url: nil, docPath: nil, pid: app.processIdentifier)
-        guard AXIsProcessTrusted() else { return snapshot }
+        // 자기 창의 접근성 트리를 이 (메인 아닌) 스레드에서 읽으면 SwiftUI 가 멈춘다. 이름만 남길 앱이라 읽지 않는다
+        guard AXIsProcessTrusted(), !isSelf else { return snapshot }
 
         let element = AXUIElementCreateApplication(app.processIdentifier)
         AXUIElementSetMessagingTimeout(element, 0.25)

@@ -27,6 +27,7 @@ final class StubLLM: LLMClient, @unchecked Sendable {
     private var responses: [Result<String, LLMError>]
     private(set) var calls = 0
     private(set) var lastUser = ""
+    private(set) var lastSystem = ""
     private(set) var users: [String] = []
     let modelName = "stub-model"
 
@@ -36,6 +37,7 @@ final class StubLLM: LLMClient, @unchecked Sendable {
         let next: Result<String, LLMError> = lock.withLock {
             calls += 1
             lastUser = user
+            lastSystem = system
             users.append(user)
             return responses.isEmpty ? .failure(LLMError.transport("no stub")) : responses.removeFirst()
         }

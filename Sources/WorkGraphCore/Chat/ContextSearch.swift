@@ -4,12 +4,17 @@ import GRDB
 public struct ContextSearch: Sendable {
     let db: WGDatabase
     let projectID: String?
+    /// 대화의 초점(고른 업무·분야). 있으면 그 업무들의 기록만 찾는다
+    let focus: [ChatFocus]
     let includeActivity: Bool
-    /// Args: db는 수집 기록과 그래프가 저장된 DB이다.
+    /// 검색 허용 범위: nodes·tasks 가 nil 이면 제한 없음. strict 면 허용 업무 밖(업무 없는 정리 전 기록 포함)은 뺀다
+    typealias Access = (nodes: Set<Int64>?, tasks: Set<Int64>?, strict: Bool)
+
+    /// Args: db는 수집 기록과 그래프가 저장된 DB, focus는 대화의 초점이다.
     /// Returns: 읽기 전용 컨텍스트 검색기.
     /// Raises: 없음.
-    public init(_ db: WGDatabase, projectID: String? = nil, includeActivity: Bool = true) {
-        self.db = db; self.projectID = projectID; self.includeActivity = includeActivity
+    public init(_ db: WGDatabase, projectID: String? = nil, focus: [ChatFocus] = [], includeActivity: Bool = true) {
+        self.db = db; self.projectID = projectID; self.focus = focus; self.includeActivity = includeActivity
     }
 
     static func migrate(_ migrator: inout DatabaseMigrator) {
@@ -39,6 +44,14 @@ public struct ContextSearch: Sendable {
         return ("(c.project_id IS NULL OR c.project_id NOT IN (SELECT id FROM app_projects WHERE json_extract(payload, '$.memoryMode') = 'projectOnly'))", [])
     }
 
+    /// 초점이 있으면 고른 업무·분야가 하나라도 겹치는 대화만 다시 찾는다 (c 는 app_conversations)
+    private var focusFilter: (String, StatementArguments) {
+        guard !focus.isEmpty else { return ("1", []) }
+        let match = focus.map { _ in "(json_extract(f.value, '$.kind') = ? AND json_extract(f.value, '$.key') = ?)" }.joined(separator: " OR ")
+        return ("EXISTS (SELECT 1 FROM json_each(c.payload, '$.scope.focuses') f WHERE \(match))",
+                StatementArguments(focus.flatMap { [$0.kind.rawValue, $0.key] }))
+    }
+
     /// 프로젝트에 명시적으로 공유한 자료도 기억 범위에 포함한다. 대화 전용 첨부는 포함하지 않는다.
     func projectSourceIDs() throws -> [String] {
         try db.writer.read { conn in
@@ -47,18 +60,31 @@ public struct ContextSearch: Sendable {
         }
     }
 
+    /// 초점을 고르면 프로젝트가 허용한 범위 안에서 그 업무들만 남긴다 (focused 가 false 면 프로젝트 범위만: 범위 메뉴의 고를 거리)
+    func access(_ conn: Database, focused: Bool = true) throws -> Access {
+        let base = try projectAccess(conn)
+        guard focused, !focus.isEmpty else { return base }
+        var tasks = Set(try focus.flatMap { try Self.focusTasks($0, conn) })
+        if let allowed = base.tasks { tasks.formIntersection(allowed) }
+        var nodes = try Self.nodeIDs(tasks: tasks, conn)
+        if let allowed = base.nodes { nodes.formIntersection(allowed) }
+        return (nodes, tasks, true)
+    }
+
     /// 전용 프로젝트는 대화뿐 아니라 그 업무의 화면·원문·그래프에서도 제외한다.
-    private func access(_ conn: Database) throws -> (nodes: Set<Int64>?, tasks: Set<Int64>?, projectOnly: Bool) {
+    private func projectAccess(_ conn: Database) throws -> Access {
         let projects = try ProjectStore.projects(conn)
         if let projectID, projects.first(where: { $0.id == projectID })?.memoryMode == .projectOnly {
-            return (try Self.nodeIDs(projectID, conn), Set(try Int64.fetchAll(conn, sql: "SELECT task_id FROM project_tasks WHERE project_id = ?", arguments: [projectID])), true)
+            let tasks = Set(try Int64.fetchAll(conn, sql: "SELECT task_id FROM project_tasks WHERE project_id = ?", arguments: [projectID]))
+            return (try Self.nodeIDs(tasks: tasks, conn), tasks, true)
         }
         let privateProjects = projects.filter { $0.memoryMode == .projectOnly }
         guard !privateProjects.isEmpty else { return (nil, nil, false) }
         var hiddenNodes: Set<Int64> = [], hiddenTasks: Set<Int64> = []
         for project in privateProjects {
-            hiddenNodes.formUnion(try Self.nodeIDs(project.id, conn))
-            hiddenTasks.formUnion(try Int64.fetchAll(conn, sql: "SELECT task_id FROM project_tasks WHERE project_id = ?", arguments: [project.id]))
+            let tasks = Set(try Int64.fetchAll(conn, sql: "SELECT task_id FROM project_tasks WHERE project_id = ?", arguments: [project.id]))
+            hiddenNodes.formUnion(try Self.nodeIDs(tasks: tasks, conn))
+            hiddenTasks.formUnion(tasks)
         }
         let tasks = Set(try Int64.fetchAll(conn, sql: "SELECT id FROM nodes WHERE label = 'Task'")).subtracting(hiddenTasks)
         let publicMembers = tasks.union(try Int64.fetchAll(conn, sql: "SELECT src FROM edges WHERE type = 'PART_OF'\(Self.restriction("dst", tasks))"))
@@ -67,34 +93,35 @@ public struct ContextSearch: Sendable {
         return (nodes, tasks, false)
     }
 
-    private static func taskRestriction(_ column: String, _ access: (nodes: Set<Int64>?, tasks: Set<Int64>?, projectOnly: Bool)) -> String {
+    private static func taskRestriction(_ column: String, _ access: Access) -> String {
         guard let tasks = access.tasks else { return "" }
-        if access.projectOnly { return restriction(column, tasks) }
+        if access.strict { return restriction(column, tasks) }
         let list = tasks.sorted().map(String.init).joined(separator: ",")
         return " AND (\(column) IS NULL\(list.isEmpty ? "" : " OR \(column) IN (\(list))"))"
     }
 
-    private static func cardRestriction(_ access: (nodes: Set<Int64>?, tasks: Set<Int64>?, projectOnly: Bool)) -> String {
+    private static func cardRestriction(_ access: Access) -> String {
         guard access.tasks != nil else { return "" }
         let condition = String(taskRestriction("task_id", access).dropFirst(5))
-        let forbidden = access.projectOnly ? "(task_id IS NULL OR NOT (\(condition)))" : "NOT (\(condition))"
+        let forbidden = access.strict ? "(task_id IS NULL OR NOT (\(condition)))" : "NOT (\(condition))"
         return " AND EXISTS (SELECT 1 FROM observations WHERE card_id = screen_cards.id AND \(condition)) AND NOT EXISTS (SELECT 1 FROM observations WHERE card_id = screen_cards.id AND \(forbidden))"
     }
 
-    /// 프로젝트 업무와 직접 연결된 세션·자료만 허용한다. 공유 자료를 통해 다른 업무로 검색 범위를 넓히지 않는다.
-    static func nodeIDs(_ projectID: String, _ conn: Database) throws -> Set<Int64> {
-        Set(try Int64.fetchAll(conn, sql: """
+    /// 업무들과 직접 연결된 세션·자료만 허용한다. 공유 자료를 통해 다른 업무로 검색 범위를 넓히지 않는다.
+    static func nodeIDs(tasks: Set<Int64>, _ conn: Database) throws -> Set<Int64> {
+        guard !tasks.isEmpty else { return [] }
+        let list = tasks.sorted().map(String.init).joined(separator: ",")
+        return Set(try Int64.fetchAll(conn, sql: """
             WITH members(id) AS (
-              SELECT task_id FROM project_tasks WHERE project_id = ?
-              UNION SELECT e.src FROM edges e JOIN project_tasks p ON p.task_id = e.dst
-                WHERE p.project_id = ? AND e.type = 'PART_OF'
+              SELECT id FROM nodes WHERE id IN (\(list))
+              UNION SELECT src FROM edges WHERE dst IN (\(list)) AND type = 'PART_OF'
             )
             SELECT id FROM nodes WHERE id IN (SELECT id FROM members)
               OR (label NOT IN ('Task', 'Session') AND id IN (
                 SELECT dst FROM edges WHERE src IN (SELECT id FROM members)
                 UNION SELECT src FROM edges WHERE dst IN (SELECT id FROM members)
               ))
-            """, arguments: [projectID, projectID]))
+            """))
     }
 
     static func restriction(_ column: String, _ ids: Set<Int64>?) -> String {
@@ -157,6 +184,16 @@ public struct ContextSearch: Sendable {
             for row in try Row.fetchAll(conn, sql: "SELECT * FROM chat_messages WHERE ts >= ? AND ts <= ? AND (\(chat.0))\(Self.taskRestriction("task_id", access))\(activity) ORDER BY ts DESC LIMIT 8", arguments: [from, to, chat.1]) {
                 results.append(.init(id: "chat:\(row["id"] as Int64)", title: "\(row["tool"] as String) 사용자 메시지", location: row["cwd"] ?? "", excerpt: "\(Self.date(row["ts"]))\n" + String((row["text"] as String).prefix(1600))))
             }
+            // 받아쓴 녹음: 제목·요약·받아쓴 글. 업무 접근 범위를 AI 도구 대화처럼 따른다
+            let recording = Self.match(needle, index: "recordings_fts", row: "id", fallback: "COALESCE(title, '') || ' ' || COALESCE(summary, '') || ' ' || transcript")
+            for row in try Row.fetchAll(conn, sql: """
+                SELECT id, started_at, duration, title, summary, transcript, text_path FROM recordings
+                WHERE status = 'ready' AND \(RecordingStore.hasTranscriptSQL) AND started_at <= ? AND COALESCE(ended_at, started_at) >= ?
+                  AND (\(recording.0))\(Self.taskRestriction("task_id", access))\(activity)
+                ORDER BY started_at DESC LIMIT 6
+                """, arguments: [to, from, recording.1]) {
+                results.append(Self.recordingSource(row, needle: needle))
+            }
             let filter = try conversationFilter(conn)
             let words = needle.split(whereSeparator: { !$0.isLetter && !$0.isNumber }).map(String.init).prefix(24)
             let match = words.allSatisfy { $0.count >= 3 } && !words.isEmpty
@@ -166,13 +203,13 @@ public struct ContextSearch: Sendable {
             if words.allSatisfy({ $0.count >= 3 }) && !words.isEmpty { arguments += [words.map { "\"\($0)\"" }.joined(separator: " OR ")] }
             else { arguments += StatementArguments(Array(words)) }
             arguments += [needle]
-            arguments += filter.1; arguments += [projectID]
+            arguments += filter.1; arguments += focusFilter.1; arguments += [projectID]
             let conversations = try Row.fetchAll(conn, sql: """
                 SELECT m.id, json_extract(c.payload, '$.title') AS title, f.text
                 FROM app_messages m JOIN app_conversations c ON c.id = m.conversation_id
                 JOIN app_messages_fts f ON f.message_id = m.id
                 WHERE m.created_at >= ? AND m.created_at <= ? AND json_extract(m.payload, '$.status') = 'complete'
-                  AND (\(match) OR instr(lower(json_extract(c.payload, '$.title')), lower(?)) > 0) AND \(filter.0)
+                  AND (\(match) OR instr(lower(json_extract(c.payload, '$.title')), lower(?)) > 0) AND \(filter.0) AND \(focusFilter.0)
                 ORDER BY CASE WHEN c.project_id = ? THEN 0 ELSE 1 END, m.created_at DESC, m.rowid DESC LIMIT 8
                 """, arguments: arguments)
             for row in conversations {
@@ -195,14 +232,14 @@ public struct ContextSearch: Sendable {
             return try db.writer.read { conn in
                 let filter = try conversationFilter(conn)
                 if pieces[0] == "message" {
-                    var args: StatementArguments = [String(pieces[1])]; args += filter.1
-                    guard let row = try Row.fetchOne(conn, sql: "SELECT f.text, c.payload FROM app_messages_fts f JOIN app_messages m ON m.id = f.message_id JOIN app_conversations c ON c.id = m.conversation_id WHERE m.id = ? AND \(filter.0)", arguments: args) else { return [] }
+                    var args: StatementArguments = [String(pieces[1])]; args += filter.1; args += focusFilter.1
+                    guard let row = try Row.fetchOne(conn, sql: "SELECT f.text, c.payload FROM app_messages_fts f JOIN app_messages m ON m.id = f.message_id JOIN app_conversations c ON c.id = m.conversation_id WHERE m.id = ? AND \(filter.0) AND \(focusFilter.0)", arguments: args) else { return [] }
                     let text: String = row["text"], offset = max(1, start), page = String(text.dropFirst(offset - 1).prefix(18000))
                     let title = try JSONDecoder().decode(ChatConversation.self, from: Data((row["payload"] as String).utf8)).title
                     return [.init(id: "message:\(pieces[1]):\(offset)", title: "대화 · \(title)", location: "", excerpt: page + "\n[전체 \(text.count)자 · 다음 시작 위치 \(offset + page.count)]")]
                 }
-                var args: StatementArguments = [String(pieces[1])]; args += filter.1
-                guard let row = try Row.fetchOne(conn, sql: "SELECT c.payload FROM app_conversations c WHERE c.id = ? AND \(filter.0)", arguments: args) else { return [] }
+                var args: StatementArguments = [String(pieces[1])]; args += filter.1; args += focusFilter.1
+                guard let row = try Row.fetchOne(conn, sql: "SELECT c.payload FROM app_conversations c WHERE c.id = ? AND \(filter.0) AND \(focusFilter.0)", arguments: args) else { return [] }
                 let title = try JSONDecoder().decode(ChatConversation.self, from: Data((row["payload"] as String).utf8)).title
                 let rows = try Row.fetchAll(conn, sql: "SELECT m.id, f.text FROM app_messages m JOIN app_messages_fts f ON f.message_id = m.id WHERE conversation_id = ? ORDER BY created_at, m.rowid LIMIT 20 OFFSET ?", arguments: [String(pieces[1]), max(0, start - 1)])
                 let text = rows.map { "[message:\($0["id"] as String)]\n\(String(($0["text"] as String).prefix(700)))" }.joined(separator: "\n\n")
@@ -219,6 +256,8 @@ public struct ContextSearch: Sendable {
                 case "observation": allowed = try Bool.fetchOne(conn, sql: "SELECT EXISTS(SELECT 1 FROM observations WHERE id = ?\(Self.taskRestriction("task_id", access)))", arguments: [id]) == true
                 case "card": allowed = try Bool.fetchOne(conn, sql: "SELECT EXISTS(SELECT 1 FROM screen_cards WHERE id = ?\(Self.cardRestriction(access)))", arguments: [id]) == true
                 case "chat": allowed = try Bool.fetchOne(conn, sql: "SELECT EXISTS(SELECT 1 FROM chat_messages WHERE id = ?\(Self.taskRestriction("task_id", access)))", arguments: [id]) == true
+                case "recording":
+                    allowed = try Bool.fetchOne(conn, sql: "SELECT EXISTS(SELECT 1 FROM recordings WHERE id = ?\(Self.taskRestriction("task_id", access)))", arguments: [id]) == true
                 case "digest":
                     allowed = try Bool.fetchOne(conn, sql: """
                         SELECT EXISTS(SELECT 1 FROM digests d JOIN nodes t ON t.label = 'Task' AND t.key = d.task_key WHERE d.id = ?\(Self.taskRestriction("t.id", access)))
@@ -256,6 +295,15 @@ public struct ContextSearch: Sendable {
                 let metrics = (try? encoder.encode(digest.metrics)).map { String(decoding: $0, as: UTF8.self) } ?? "{}"
                 return [.init(id: sourceID, title: digest.title, location: "",
                               excerpt: "\(header)\n\(digest.body)\n\n수치: \(metrics)\n근거 key: \(digest.anchors.joined(separator: ", "))")]
+            case "recording":
+                guard let row = try Row.fetchOne(conn, sql: "SELECT * FROM recordings WHERE id = ? AND status = 'ready'", arguments: [id]) else { return [] }
+                let transcript: String = row["transcript"]
+                let title: String? = row["title"]
+                let offset = max(1, start)
+                let page = String(transcript.dropFirst(offset - 1).prefix(18000))
+                let footer = "[전체 \(transcript.count)자 · 다음 시작 위치 \(offset + page.count)]"
+                return [.init(id: sourceID, title: "녹음 · \(title ?? "제목 없음")", location: row["text_path"] ?? "",
+                              excerpt: Self.recordingHeader(row) + "\n\n" + page + "\n" + footer)]
             default: return []
             }
         }
@@ -282,7 +330,7 @@ public struct ContextSearch: Sendable {
             var tasks: [String: (id: Int64, title: String)] = [:]
             for row in try Row.fetchAll(conn, sql: "SELECT id, key, title FROM nodes WHERE label = 'Task'") { tasks[row["key"]] = (row["id"], row["title"]) }
             func allowed(_ key: String) -> Bool {
-                if key.isEmpty { return !access.projectOnly }
+                if key.isEmpty { return !access.strict }
                 guard let id = tasks[key]?.id else { return false }
                 return access.tasks.map { $0.contains(id) } ?? true
             }
@@ -350,6 +398,28 @@ public struct ContextSearch: Sendable {
             return [.init(id: "usage:\(firstDay)..\(lastDay)\(scope)", title: "사용 시간 집계 · \(firstDay) ~ \(lastDay)", location: "",
                           excerpt: lines.joined(separator: "\n"))]
         }
+    }
+
+    /// 녹음 출처 머리: 녹음 시각·길이, 받아쓴 글이라는 표시, 요약
+    private static func recordingHeader(_ row: Row) -> String {
+        let startedAt: Double = row["started_at"], duration: Double = row["duration"]
+        let summary: String? = row["summary"]
+        var header = "\(date(startedAt)) 녹음 (\(RecordingText.duration(duration))) · 이 Mac 의 음성 인식으로 받아쓴 글 (잘못 들은 단어가 있을 수 있음)"
+        if let summary, !summary.isEmpty { header += "\n요약: \(summary)" }
+        return header
+    }
+
+    /// 녹음 검색 결과: 받아쓴 글에서 검색어가 처음 나온 곳 앞뒤
+    private static func recordingSource(_ row: Row, needle: String) -> ChatSource {
+        let transcript: String = row["transcript"]
+        let words = needle.split(whereSeparator: \.isWhitespace).map(String.init)
+        let range = words.compactMap { transcript.range(of: $0, options: .caseInsensitive) }.first
+        let start = range.map { transcript.distance(from: transcript.startIndex, to: $0.lowerBound) } ?? 0
+        let id: Int64 = row["id"]
+        let title: String? = row["title"]
+        let body = String(transcript.dropFirst(max(0, start - 200)).prefix(1400))
+        return .init(id: "recording:\(id)", title: "녹음 · \(title ?? "제목 없음")", location: row["text_path"] ?? "",
+                     excerpt: recordingHeader(row) + "\n" + body)
     }
 
     /// Args: time은 Unix 시각이다.

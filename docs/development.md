@@ -39,7 +39,10 @@ SIGN_IDENTITY="Apple Development: 인증서 이름" ./scripts/make-app.sh
 | `WORKGRAPH_CODEX_AUTH` | 앱 전용 ChatGPT 인증 파일 경로 |
 | `WORKGRAPH_SHOW_WINDOW=1` | 시작 시 메인 창 표시 |
 | `WORKGRAPH_REQUEST_PERMISSIONS=1` | 시작 시 손쉬운 사용·화면 기록 권한 요청 |
-| `WORKGRAPH_TAB` | 시작 탭: `graph`, `tasks`, `files`, `library`, `activity`, `chat`, `settings` |
+| (녹음 받아쓰기 모델) | Whisper large-v3-turbo 압축판(`openai_whisper-large-v3-v20240930_626MB`, 약 610MB)을 처음 받아쓸 때 데이터 폴더의 `models/` 아래로 내려받는다(WhisperKit, 기기 안). 녹음하는 동안 30초쯤마다 조용한 순간에 잘라 미리 받아써 두고(`LiveTranscription`), 끝나면 남은 조각만 받아쓴다(11분 녹음도 끝나고 약 2초). 앱을 다시 켰거나 미리 받아쓰기가 실패하면 파일 전체를 같은 30초 조각으로 받아쓴다. 내려받기·불러오기에 실패하면 애플 기기 안 음성 인식으로 받아쓴다. 모델은 90초 동안 안 쓰면 내려놓는다 |
+| `WORKGRAPH_TRANSCRIBE_TRACE` | 개발용 받아쓰기 진단: `<녹음 파일>|<적을 파일>`. 앱과 같은 방식으로 받아쓰며 인식기 결과(마지막 결과·발화 끝 표시·끝 시각·글)를 하나하나 적고 끝난다. 음성 인식 권한이 앱 번들에만 있어 `open -n Sillog.app --env 'WORKGRAPH_TRANSCRIBE_TRACE=…'` 로 띄운다. `WORKGRAPH_TRANSCRIBE_ENGINE=apple` 이면 애플 음성 인식으로(기본은 Whisper 로 파일 전체), `WORKGRAPH_TRANSCRIBE_GAIN=2` 로 애플 인식의 키울 배수를 직접 정할 수 있다. `WORKGRAPH_TRANSCRIBE_ENGINE=live` 면 파일을 녹음기처럼 흘려보내며 녹음 중 미리 받아쓰기를 하고 끝난 뒤 글이 나오기까지 걸린 시간을 적는다(`WORKGRAPH_TRANSCRIBE_SPEED=8` 로 8배 빨리) |
+| (숨은 설정 `frameLog`) | `defaults write com.capstone.workgraph frameLog -bool true` 면 화면 갱신마다 메인 스레드가 늦은 프레임을 재서, 늦은 프레임이 있던 1초마다 화면 이름과 함께 app.log 에 `프레임 기록 자료 > 파일: 120장 중 늦음 3 (많이 늦음 1), 가장 긴 간격 40ms` 처럼 남긴다. 앱을 다시 켜야 적용, `defaults delete … frameLog` 로 끈다 |
+| `WORKGRAPH_TAB` | 시작 탭: `graph`, `chat`, `records`(기록 자료), `settings`. `files`, `history`(지난 기록), `library` 는 기록 자료의 그 구역으로, `activity` 는 설정의 활동 로그로 연다 (업무 목록은 그래프 탭에만 있다) |
 
 ## 테스트와 CLI
 
@@ -159,7 +162,8 @@ swift run wgctl digest show --week 2026-W40   # 요약 확인
 - **채팅 시스템 프롬프트**: `Sources/WorkGraphCore/Chat/Prompts/chat-system-prompt.md`(원문), `ChatSystemPrompt.swift`(끝의 `{{…}}` 칸 채우기)
 - **스킬**: `Sources/WorkGraphCore/Chat/Skills/catalog.json`과 각 Markdown 지침
 - **대화·예약 상태**: `Sources/WorkGraphApp/Chat/ChatState.swift`
-- **프로젝트 제안·소속**: `Sources/WorkGraphCore/Chat/ProjectOrganizer.swift`, `ProjectStore.swift`, `Sources/WorkGraphApp/Chat/ProjectState.swift`
+- **채팅 범위(분야·업무 여러 개로 좁히기)**: `ChatScope.focus`(대화 기록의 `scope.focuses`), `Sources/WorkGraphCore/Chat/ChatFocus.swift`(고를 거리, 프롬프트의 `<focus>`), `ContextSearch.swift`의 `access`(합친 범위로 거르기), `Sources/WorkGraphApp/Views/ChatFocusPicker.swift`(범위 단추, 분야→업무 나무 `ChatFocusTree`와 고르기 규칙)
+- **프로젝트 제안·소속**(화면에서 뺌, 자동 제안도 부르지 않음. 데이터와 코드는 남김): `Sources/WorkGraphCore/Chat/ProjectOrganizer.swift`, `ProjectStore.swift`, `Sources/WorkGraphApp/Chat/ProjectState.swift`
 - **자료 보관·추출**: `Sources/WorkGraphCore/Chat/LibraryStore.swift`, `FileTextExtractor.swift`, `Sources/WorkGraphApp/Chat/LibraryState.swift`, `Views/LibraryView.swift`
 - **그래프 화면**: `Sources/WorkGraphApp/Resources/graph`
 - **기록 정리**: `Sources/WorkGraphCore/Memory/Consolidator.swift`, `LedgerBuilder.swift`, `ActivityTally.swift`, `Digest*.swift`, `Storage/Pruner.swift`, `RetentionPolicy.swift`, `StorageUsage.swift`, `Sources/WorkGraphApp/Views/StorageSettingsView.swift`

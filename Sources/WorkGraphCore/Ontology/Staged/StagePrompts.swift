@@ -20,6 +20,7 @@ public enum StagePrompt {
     - ROWS: time-ordered activity rows. One row = one app/window context with its dwell seconds. `type` and `uri` were assigned by rules and are reliable.
       Under a row, `screen:` comes from a model that looked at the screenshot of that moment: its first line is that model's one-sentence reading of the front window, and the `·` lines below it are what was visible, quoted as written (messages with their sender). The quoted lines are the evidence; the first line is only a reading and can be wrong. When the first line does not fit the quoted lines, or a quoted word could mean more than one thing, decide from the quoted lines read together with the user's goals. `text:` is raw text read from the window when no screenshot description exists; it may include menus and sidebars.
       Rows whose app is "Claude Code" or "Codex CLI" (type AIChat, dwell 0) are the user's own messages to an AI coding assistant, quoted in `text:`. They say in the user's own words what they are trying to do: use them as the strongest evidence for what the surrounding rows are about.
+      Rows whose app is "녹음" (type Recording, dwell 0) are voice recordings the user made in Sillog, such as a lecture, a meeting or a memo. `text:` holds a summary and the start of what was said. Judge them by what was said, like content the user engaged with.
     """
 
     public static let classifySystem = """

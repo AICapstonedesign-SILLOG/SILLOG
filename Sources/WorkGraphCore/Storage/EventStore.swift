@@ -211,6 +211,7 @@ public struct EventStore: Sendable {
             try conn.execute(sql: "UPDATE observations SET batch_id = NULL, task_id = NULL, resource_relevant = 1, off_task = 0, task_reason = NULL WHERE batch_id IN (\(list))")
             let rows = conn.changesCount
             try conn.execute(sql: "UPDATE chat_messages SET batch_id = NULL, task_id = NULL WHERE batch_id IN (\(list))")
+            try conn.execute(sql: "UPDATE recordings SET batch_id = NULL, task_id = NULL WHERE batch_id IN (\(list))")
             try conn.execute(sql: "UPDATE batches SET status = 'replaced' WHERE id IN (\(list))")
             return (rows, lastTs)
         }

@@ -169,4 +169,48 @@ final class FolderSuggesterTests: XCTestCase {
         XCTAssertEqual(next.suggestedFolder, dsFolder)
         XCTAssertTrue(llm.lastUser.contains("EARLIER THE USER MOVED a file from the same page TO: ~/Desktop/5-1/자료구조"), "사용자가 고른 폴더가 힌트가 된다")
     }
+
+    private func recordingText(_ name: String) throws -> String {
+        let url = root.appendingPathComponent("Documents/Sillog 녹음/\(name)")
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data("# 녹음".utf8).write(to: url)
+        return url.path
+    }
+
+    func testRecordingTranscriptIsFiledByWhatWasSaid() async throws {
+        let dsFolder = root.appendingPathComponent("Desktop/5-1/자료구조").path
+        let llm = StubLLM([.success(#"{"folder":"\#(dsFolder)","confidence":0.9,"reason":"자료구조 강의 녹음"}"#)])
+        let suggester = FolderSuggester(db: db, llm: llm, home: root.path)
+        let excerpt = "연결 리스트를 설명한 강의.\n오늘은 자료구조 3주차, 연결 리스트의 삽입과 삭제를 봅니다."
+        let suggestion = try await suggester.suggest(filePath: try recordingText("2026-10-10 녹음 15-32.md"), originURL: nil, index: index,
+                                                     context: FolderSuggester.Context(recentTitles: [], openTasks: [], now: 1_000,
+                                                                                      contentExcerpt: excerpt, kind: .recording))
+        XCTAssertEqual(try XCTUnwrap(suggestion).suggestedFolder, dsFolder)
+        XCTAssertTrue(llm.lastSystem.contains("voice recording"))
+        XCTAssertFalse(llm.lastSystem.contains("newly downloaded document"))
+        XCTAssertTrue(llm.lastUser.contains("THIS FILE IS: the transcript of a voice recording the user just made"))
+        XCTAssertTrue(llm.lastUser.contains("CONTENT (transcript excerpt): 연결 리스트를 설명한 강의. 오늘은 자료구조 3주차"))
+        XCTAssertTrue(llm.lastUser.contains("~/Desktop/5-1/자료구조"), "내용 발췌가 후보를 끌어올린다")
+        XCTAssertFalse(llm.lastUser.contains("ai 기초수학"), "내용과 맞지 않는 폴더는 후보에 없다")
+    }
+
+    func testARecordingNamedOnlyByDateHasNoCandidatesWithoutAnExcerpt() async throws {
+        let llm = StubLLM([])
+        let suggestion = try await FolderSuggester(db: db, llm: llm, home: root.path)
+            .suggest(filePath: try recordingText("2026-10-10 녹음 15-32.md"), originURL: nil, index: index,
+                     context: FolderSuggester.Context(recentTitles: [], openTasks: [], now: 1_000, kind: .recording))
+        XCTAssertNil(suggestion)
+        XCTAssertEqual(llm.calls, 0)
+    }
+
+    func testDownloadsKeepTheDownloadWording() async throws {
+        let mathFolder = root.appendingPathComponent("Desktop/5-1/ai 기초수학").path
+        let llm = StubLLM([.success(#"{"folder":"\#(mathFolder)","confidence":0.9,"reason":"r"}"#)])
+        _ = try await FolderSuggester(db: db, llm: llm, home: root.path)
+            .suggest(filePath: try download("week4.pdf"), originURL: nil, index: index,
+                     context: FolderSuggester.Context(recentTitles: ["AI기초수학"], openTasks: [], now: 1_000))
+        XCTAssertTrue(llm.lastSystem.contains("newly downloaded document"))
+        XCTAssertFalse(llm.lastUser.contains("CONTENT (transcript excerpt)"))
+        XCTAssertFalse(llm.lastUser.contains("THIS FILE IS"))
+    }
 }

@@ -11,8 +11,13 @@ enum AppEntry {
         if let directory = ProcessInfo.processInfo.environment["WORKGRAPH_SNAPSHOT"], !directory.isEmpty {
             MainActor.assumeIsolated { SnapshotRunner.run(into: directory) }
         }
+        // 개발용: 녹음 파일 하나를 앱과 같은 방식으로 받아쓰며 인식기 결과를 하나하나 적고 끝난다 (TranscribeTrace)
+        if let spec = ProcessInfo.processInfo.environment["WORKGRAPH_TRANSCRIBE_TRACE"], !spec.isEmpty {
+            TranscribeTrace.run(spec)
+        }
         let fonts = BrandFonts.register()
         if fonts.count < 6 { AppLog.write("글꼴 \(fonts.count)/6개만 등록됨: \(fonts.sorted())") }
+        MenuBarPlacement.preferRightSide(.standard)
         WorkGraphApp.main()
     }
 }
@@ -25,7 +30,7 @@ struct WorkGraphApp: App {
         MenuBarExtra {
             MenuBarView().environmentObject(state)
         } label: {
-            MenuBarLabel(paused: state.status.paused).environmentObject(state)
+            MenuBarLabel(paused: state.status.paused, recording: state.activeRecording != nil).environmentObject(state)
         }
         .menuBarExtraStyle(.window)
 
@@ -61,14 +66,29 @@ final class WindowOpener {
     }
 }
 
+/// 메뉴 막대 아이콘의 첫 자리. macOS 는 아이콘 자리를 앱 설정의 "NSStatusItem Preferred Position <이름>" 에 기억한다
+/// (값은 화면 오른쪽 끝에서 잰 거리, 예: 와이파이 225 · 배터리 263 · 한/영 334). 저장된 자리가 없으면 맨 왼쪽에 붙어
+/// 메뉴 막대가 붐비면 노치 뒤로 가려지므로, 시계 쪽(배터리와 한/영 사이)에 둔다. 사용자가 ⌘-드래그로 옮긴 자리는 그대로 둔다
+enum MenuBarPlacement {
+    /// SwiftUI MenuBarExtra 의 상태 막대 항목 이름은 Item-0
+    static let key = "NSStatusItem Preferred Position Item-0"
+    static let rightSide = 300.0
+
+    static func preferRightSide(_ defaults: UserDefaults) {
+        guard defaults.object(forKey: key) == nil else { return }
+        defaults.set(rightSide, forKey: key)
+    }
+}
+
 /// 메뉴바 아이콘. 메뉴바가 붐비면 노치 뒤로 가려질 수 있으므로 앱을 찾는 주 경로는 Dock 아이콘이다.
 struct MenuBarLabel: View {
     let paused: Bool
+    var recording = false
     @EnvironmentObject private var state: AppState
     @Environment(\.openWindow) private var openWindow
 
     var body: some View {
-        Image(systemName: paused ? "pause.fill" : "point.3.connected.trianglepath.dotted")
+        Image(nsImage: Self.icon(paused: paused, recording: recording))
             .task {
                 WindowOpener.shared.open = { openWindow(id: "main") }
                 await state.bootstrap()
@@ -76,6 +96,22 @@ struct MenuBarLabel: View {
                 guard state.phase != .ready || Launch.isFirst || !Launch.asLoginItem else { return }
                 WindowOpener.shared.openMain()
             }
+    }
+
+    /// 평소·일시정지는 메뉴 막대 색을 따르는 템플릿 아이콘, 녹음 중은 빨간 점 (색을 그대로 그린다)
+    static func icon(paused: Bool, recording: Bool) -> NSImage {
+        if recording {
+            let red = NSImage.SymbolConfiguration(paletteColors: [.systemRed])
+            let config = NSImage.SymbolConfiguration(pointSize: 13, weight: .regular).applying(red)
+            let image = NSImage(systemSymbolName: "record.circle.fill", accessibilityDescription: "녹음 중")?.withSymbolConfiguration(config) ?? NSImage()
+            image.isTemplate = false
+            image.accessibilityDescription = "녹음 중"
+            return image
+        }
+        let name = paused ? "pause.fill" : "point.3.connected.trianglepath.dotted"
+        let image = NSImage(systemSymbolName: name, accessibilityDescription: "Sillog") ?? NSImage()
+        image.isTemplate = true
+        return image
     }
 }
 

@@ -9,6 +9,21 @@ public enum FileSuggestionCopy {
         "\(fileName)\(objectParticle(fileName)) \(folderLabel(folder, home: home)) 폴더로 옮겨 보세요."
     }
 
+    /// 받아쓴 녹음의 폴더 제안 알림 (버튼은 옮기기·무시 그대로)
+    public static let recordingTitle = "받아쓴 녹음을 정리할까요?"
+
+    /// "'2026-10-10 자료구조 3주차 강의.md'를 문서 / 학교 / 자료구조 폴더로 옮겨 보세요." (.md 는 '엠디'로 읽어 '를')
+    public static func recordingBody(fileName: String, folder: String, home: String) -> String {
+        "'\(fileName)'를 \(folderLabel(folder, home: home)) 폴더로 옮겨 보세요."
+    }
+
+    /// 폴더 제안이 없을 때: 저장한 곳만 알린다
+    public static let transcribedTitle = "녹음을 받아썼어요"
+
+    public static func transcribedBody(fileName: String, folder: String, home: String) -> String {
+        "'\(fileName)'를 \(folderLabel(folder, home: home)) 폴더에 저장했어요."
+    }
+
     /// 을/를: 마지막 글자가 한글이면 받침으로 고르고, 그 밖(확장자로 끝나는 파일 이름 등)은 Figma 처럼 "을"
     public static func objectParticle(_ word: String) -> String {
         guard let last = word.unicodeScalars.last, (0xAC00...0xD7A3).contains(last.value) else { return "을" }

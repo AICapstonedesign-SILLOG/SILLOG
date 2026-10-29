@@ -18,7 +18,7 @@ public enum TBox {
 
     public static let resourceTypes: [(name: String, parent: String?)] = [
         ("참고자료", nil), ("Documentation", "참고자료"), ("QnA", "참고자료"), ("Paper", "참고자료"),
-        ("Video", "참고자료"), ("AIChat", "참고자료"), ("WebPage", "참고자료"),
+        ("Video", "참고자료"), ("AIChat", "참고자료"), ("WebPage", "참고자료"), ("Recording", "참고자료"),
         ("산출물", nil), ("CodeFile", "산출물"), ("Note", "산출물"), ("Document", "산출물"), ("Design", "산출물"),
         ("Preview", nil), ("Message", nil),
     ]

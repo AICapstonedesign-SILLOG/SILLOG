@@ -9,6 +9,8 @@ struct ChatSystemPrompt: Sendable {
     var skillInstructions = ""
     var project: ChatProject?
     var rememberedSources = ""
+    /// 대화의 초점 설명 (ContextSearch.focusOutline). nil 이면 블록을 뺀다
+    var focus: String?
     /// 원문이 남아 있는 첫 날. 정리한 적이 없으면 nil
     var rawRecordsSince: String?
 
@@ -27,21 +29,25 @@ struct ChatSystemPrompt: Sendable {
         var omitted: Set<String> = []
         if role != nil || skillInstructions.isEmpty { omitted.insert("skill_instructions") }
         if role != nil || project == nil { omitted.insert("project") }
+        if role != nil || focus == nil { omitted.insert("focus") }
         if role != nil || rememberedSources.isEmpty { omitted.insert("remembered_sources") }
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "en_US_POSIX"); formatter.timeZone = timeZone
         formatter.dateFormat = "yyyy-MM-dd HH:mm (EEEE)"
-        let values = [
+        // 타입을 적고 식을 나눠 둔다: 한 덩어리 사전 리터럴은 Swift 6.2 에서 타입 계산 시간 초과로 빌드가 멈춘다
+        let plugins = (scope.plugins + (scope.useGitHub ? ["github"] : [])).joined(separator: ", ")
+        let raw: [String: String] = [
             "skill_instructions": skillInstructions,
             "project_title": project?.title ?? "", "project_goal": project?.goal ?? "",
             "project_memory_mode": project?.memoryMode.title ?? "", "project_instructions": project?.instructions ?? "",
             "use_activity": scope.useActivity ? "on" : "off", "connected_paths": scope.paths.joined(separator: ", "),
-            "use_web": scope.useWeb ? "on" : "off", "plugins": (scope.plugins + (scope.useGitHub ? ["github"] : [])).joined(separator: ", "),
-            "remembered_sources": rememberedSources,
+            "use_web": scope.useWeb ? "on" : "off", "plugins": plugins,
+            "remembered_sources": rememberedSources, "focus_outline": focus ?? "",
             "current_time": formatter.string(from: now), "timezone": timeZone.identifier,
             "chat_model": chatModel, "run_mode": scheduled ? "scheduled" : "interactive", "agent_role": role ?? "main",
             "raw_records_since": rawRecordsSince ?? "all",
-        ].mapValues { $0.isEmpty ? "none" : $0 }
+        ]
+        let values = raw.mapValues { $0.isEmpty ? "none" : $0 }
         return Self.fill(template, omitting: omitted, values: values)
     }
 

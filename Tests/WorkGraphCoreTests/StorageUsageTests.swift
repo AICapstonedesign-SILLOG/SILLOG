@@ -82,4 +82,16 @@ final class StorageUsageTests: XCTestCase {
         let batch = try XCTUnwrap(try EventStore(db).recentBatches(limit: 1).first)
         XCTAssertEqual(batch.systemPrompt, OntologyPrompt.system, "읽을 때는 원문을 채운다")
     }
+
+    func testRecordingsAreTheirOwnCategoryWithTheAudioFolder() throws {
+        XCTAssertEqual(StorageUsage.category(of: "recordings"), .recordings)
+        XCTAssertEqual(StorageUsage.category(of: "recordings_fts_data"), .recordings)
+        XCTAssertEqual(StorageUsage.Category.recordings.title, "녹음")
+        let db = try WGDatabase.inMemory()
+        try FileManager.default.createDirectory(at: db.recordingsDirectory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: db.recordingsDirectory) }
+        try Data(repeating: 1, count: 10_000).write(to: db.recordingsDirectory.appendingPathComponent("1.m4a"))
+        let usage = try StorageUsage.measure(db: db, capturesDir: nil)
+        XCTAssertGreaterThanOrEqual(usage.bytes[.recordings] ?? 0, 10_000)
+    }
 }

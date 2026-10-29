@@ -34,8 +34,23 @@ final class SuggestionNotifier: NSObject, UNUserNotificationCenterDelegate, @unc
         }
     }
 
-    func notify(_ suggestion: FileSuggestion, home: String) {
+    func notify(_ suggestion: FileSuggestion, home: String, recording: Bool = false) {
         guard available, let id = suggestion.id else { return }
+        let title = recording ? FileSuggestionCopy.recordingTitle : FileSuggestionCopy.title
+        let body = recording
+            ? FileSuggestionCopy.recordingBody(fileName: suggestion.fileName, folder: suggestion.suggestedFolder, home: home)
+            : FileSuggestionCopy.body(fileName: suggestion.fileName, folder: suggestion.suggestedFolder, home: home)
+        deliver(title: title, body: body, category: Self.category, suggestionId: id, identifier: "file-suggestion-\(id)")
+    }
+
+    /// 받아쓴 녹음을 저장만 했을 때 (폴더 제안 없음). 버튼 없음
+    func notifyTranscribed(fileName: String, folder: String, home: String) {
+        guard available else { return }
+        deliver(title: FileSuggestionCopy.transcribedTitle, body: FileSuggestionCopy.transcribedBody(fileName: fileName, folder: folder, home: home),
+                category: nil, suggestionId: nil, identifier: "recording-\(UUID().uuidString)")
+    }
+
+    private func deliver(title: String, body: String, category: String?, suggestionId: Int64?, identifier: String) {
         let center = UNUserNotificationCenter.current()
         center.requestAuthorization(options: [.alert, .sound]) { [weak self] granted, error in
             self?.authorized = granted
@@ -45,12 +60,12 @@ final class SuggestionNotifier: NSObject, UNUserNotificationCenterDelegate, @unc
             }
             guard granted else { return }
             let content = UNMutableNotificationContent()
-            content.title = FileSuggestionCopy.title
-            content.body = FileSuggestionCopy.body(fileName: suggestion.fileName, folder: suggestion.suggestedFolder, home: home)
-            content.categoryIdentifier = Self.category
-            content.userInfo = ["suggestionId": id]
+            content.title = title
+            content.body = body
+            if let category { content.categoryIdentifier = category }
+            if let suggestionId { content.userInfo = ["suggestionId": suggestionId] }
             content.sound = .default
-            center.add(UNNotificationRequest(identifier: "file-suggestion-\(id)", content: content, trigger: nil)) { error in
+            center.add(UNNotificationRequest(identifier: identifier, content: content, trigger: nil)) { error in
                 if let error { AppLog.write("알림 보내기 실패: \(error.localizedDescription)") }
             }
         }

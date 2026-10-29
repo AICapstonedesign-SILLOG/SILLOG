@@ -33,8 +33,19 @@ final class AppState: ObservableObject {
     /// 로그인해야 쓸 수 있다. `.ready` 가 되기 전에는 수집기도 배치도 돌지 않는다.
     @Published var phase: AppPhase = .login
     @Published var selectedTab: MainWindow.Tab = MainWindow.initialTab
+    /// 기록 자료 탭에서 보고 있는 구역 (메뉴 막대·알림이 파일 구역으로 바로 연다)
+    @Published var recordsSection: RecordsView.Section = MainWindow.initialRecordsSection
+    /// 설정 탭에서 보고 있는 구역 (권한 안내가 일반으로 바로 연다)
+    @Published var settingsSection: SettingsView.Section = MainWindow.initialSettingsSection
+    /// 업무 드로어(창 왼쪽 업무 목록)에서 고른 업무와 상세가 펼쳐졌는지. 업무 목록에서 눌러도, 그래프에서 눌러도 같은 드로어가 열린다
+    @Published var selectedTaskId: Int64?
+    @Published var taskDetailOpen = false
     /// 파일 정리 제안. 대기 중인 것이 앞에 온다.
+    /// 대기 중인 제안 전부 + 지난 기록의 지금 쪽
     @Published var fileSuggestions: [FileSuggestion] = []
+    /// 파일 > 지난 기록: 보고 있는 쪽(0부터)과 결정한 제안 전체 개수
+    @Published var fileHistoryPage = 0
+    @Published var fileHistoryTotal = 0
     @Published var fileError: String?
     @Published var notificationsDenied = false
     @Published var taskList: [TaskSummary] = []
@@ -62,6 +73,11 @@ final class AppState: ObservableObject {
     @Published var pruneConsented = false
     /// 원문(화면 텍스트)이 남아 있는 첫 날. 정리한 적이 없으면 nil
     @Published var rawRecordsSince: String?
+    // 녹음 (AppState+Recording)
+    @Published var activeRecording: ActiveRecording?
+    @Published var recordingWork: RecordingPipeline.Step?
+    @Published var recordingProblem: RecordingProblem?
+    @Published var recordings: [Recording] = []
 
     let databasePath = WGDatabase.defaultPath()
     private(set) var db: WGDatabase?
@@ -74,6 +90,15 @@ final class AppState: ObservableObject {
     var folderIndex: FolderIndex?
     var folderIndexAt = 0.0
     var folderIndexTask: Task<FolderIndex, Never>?
+    var recordingPipeline: RecordingPipeline?
+    var recorder: any AudioRecording = VoiceRecorder()
+    /// 녹음 중 미리 받아쓰기 (실제 앱에서만. 미리보기·시험은 직접 넣는다): 정리할 때 이 글을 쓰고, 없으면 파일 전체를 받아쓴다
+    var liveTranscriptions: LiveTranscriptions?
+    var recordingPermissions: any RecordingPermissions = SystemRecordingPermissions()
+    var recordingQueue: Task<Void, Never>?
+    /// 차례를 기다리거나 정리 중인 녹음 id (같은 녹음을 두 번 넣지 않게)
+    var queuedRecordingIds: Set<Int64> = []
+    var recordingStepToken = 0
     let notifier = SuggestionNotifier()
     private var tasks: [Task<Void, Never>] = []
     private let codexAuth = CodexAuthManager()
@@ -105,6 +130,7 @@ final class AppState: ObservableObject {
             self.db = database
             self.store = store
             self.coordinator = coordinator
+            FrameMonitor.shared.screen = { [weak self] in self?.screenName ?? "" }   // 개발용 프레임 측정 로그의 화면 이름
             self.chat = ChatState(db: database, makeClient: { [unowned self] in self.makeChatClient() },
                                   makeProjectClient: { [unowned self] in self.makeClient() })
             var batchConfig = BatchConfig()
@@ -123,6 +149,11 @@ final class AppState: ObservableObject {
                 if await batcher.assignThemes() != nil { self?.graphVersion += 1 }
             }
             self.suggester = FolderSuggester(db: database, llm: makeQuickClient())
+            self.recordingPipeline = makeRecordingPipeline(database)
+            // 녹음 중에 앱을 끝내면 파일을 닫아 둔다 (다음 실행 때 받아쓰기부터 이어 간다)
+            _ = NotificationCenter.default.addObserver(forName: NSApplication.willTerminateNotification, object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.finishRecordingOnQuit() }
+            }
             notifier.onAction = { [weak self] action, id in Task { @MainActor in self?.handleNotificationAction(action, id: id) } }
             notifier.onDenied = { [weak self] denied in Task { @MainActor in self?.notificationsDenied = denied } }
         } catch {
@@ -132,6 +163,15 @@ final class AppState: ObservableObject {
 
     /// 개발용 미리보기 (SnapshotCatalog). DB·실행 잠금·수집기를 만들지 않고, configure 가 화면에 필요한 값만 채운다.
     /// database: 정리 상세처럼 DB 에서 읽는 화면을 그릴 때 쓰는 메모리 DB
+    /// 지금 보고 있는 화면 이름 (개발용 프레임 측정 로그에 쓴다)
+    var screenName: String {
+        switch selectedTab {
+        case .records: return "\(selectedTab.rawValue) > \(recordsSection.rawValue)"
+        case .settings: return "\(selectedTab.rawValue) > \(settingsSection.rawValue)"
+        default: return selectedTab.rawValue
+        }
+    }
+
     init(preview configure: (AppState) -> Void, database: WGDatabase? = nil) {
         settings = AppSettings()
         isPreview = true
@@ -249,6 +289,13 @@ final class AppState: ObservableObject {
                 await self?.consolidateIfDue()
             }
         })
+        tasks.append(Task { [weak self] in                 // 녹음: 꺼지기 전에 못 끝낸 것을 이어서 정리하고, 7일 지난 녹음 파일을 지운다 (켤 때와 하루 한 번)
+            await self?.resumeRecordings()
+            while !Task.isCancelled {
+                self?.deleteExpiredRecordingAudio()
+                try? await Task.sleep(nanoseconds: 86_400_000_000_000)
+            }
+        })
     }
 
     private func makeOpenAIClient() -> OpenAICompatClient {
@@ -264,6 +311,17 @@ final class AppState: ObservableObject {
     /// 파일 정리 제안용: 알림이 바로 떠야 하므로 low
     private func makeQuickClient() -> any LLMClient {
         settings.llmProvider == "openai" ? makeOpenAIClient() : CodexResponsesClient(auth: codexAuth, model: settings.codexModel, reasoningEffort: "low")
+    }
+
+    /// 녹음 정리: 기기 안 받아쓰기(녹음 중 미리 받아쓴 Whisper 글, 없으면 파일 전체를 Whisper 로, 못 쓰면 애플 음성 인식),
+    /// 제목은 빠른 모델, 받아쓴 글은 ~/Documents/Sillog 녹음. 미리 받아쓰기는 설정을 바꿔 다시 만들어도 녹음 중인 것을 잃지 않게 하나만 둔다
+    private func makeRecordingPipeline(_ database: WGDatabase) -> RecordingPipeline {
+        let live = liveTranscriptions ?? LiveTranscriptions(prewarm: { await WhisperEngine.shared.prewarm() }) { samples in
+            try await WhisperEngine.shared.transcribe(samples: samples)
+        }
+        liveTranscriptions = live
+        return RecordingPipeline(db: database, transcriber: LiveFirstTranscriber(live: live, fallback: WhisperTranscriber()), llm: makeQuickClient(),
+                                 textFolder: RecordingPipeline.defaultTextFolder(home: NSHomeDirectory()))
     }
 
     /// Args: 없음.
@@ -383,7 +441,7 @@ final class AppState: ObservableObject {
                 // 로그아웃·연결 변경·중단으로 끝난 검사는 이전 결과를 덮어쓰지 않는다.
             } catch {
                 guard codexModelTaskID == id, !Task.isCancelled else { return }
-                let message = "모델 확인 실패: \((error as? LLMError)?.description ?? error.localizedDescription)"
+                let message = "모델 확인 실패: \(Self.friendlyModelError((error as? LLMError)?.description ?? error.localizedDescription))"
                 if checkBatch { codexModelsError = message }
                 if checkChat { chatCodexModelsError = message }
             }
@@ -392,11 +450,37 @@ final class AppState: ObservableObject {
         await withTaskCancellationHandler { await task.value } onCancel: { task.cancel() }
     }
 
+    /// 서버 원문(HTTP 429 JSON 등)을 사람이 읽을 한 줄로 바꾼다
+    static func friendlyModelError(_ raw: String) -> String {
+        if raw.contains("usage_limit_reached") || raw.contains("HTTP 429") {
+            guard let r = raw.range(of: #""resets_in_seconds":\s*(\d+)"#, options: .regularExpression),
+                  let secs = Int(raw[r].filter(\.isNumber)) else { return "사용량 한도에 도달했어요" }
+            let d = secs / 86400, h = secs % 86400 / 3600
+            return "사용량 한도에 도달했어요. \(d > 0 ? "\(d)일 " : "")\(h)시간 뒤 다시 쓸 수 있어요"
+        }
+        if raw.contains("HTTP 401") || raw.contains("HTTP 403") { return "다시 로그인해야 해요" }
+        if raw.contains("HTTP 5") { return "서버가 잠시 응답하지 않아요" }
+        let line = raw.split(separator: "\n").first.map(String.init) ?? raw
+        return line.count > 80 ? String(line.prefix(80)) + "…" : line
+    }
+
     private func verificationError(_ result: CodexModelVerification, empty: String) -> String? {
         if !result.failures.isEmpty {
-            return result.failures.map { "\($0.model.displayName): \($0.message)" }.joined(separator: "\n")
+            return result.failures.map { "\($0.model.displayName): \(Self.friendlyModelError($0.message))" }.joined(separator: "\n")
         }
         return result.models.isEmpty ? empty : nil
+    }
+
+    /// 기록 자료의 파일 구역으로 (메뉴 막대 파일 줄, 알림 '열기')
+    func openFileSuggestions() {
+        selectedTab = .records
+        recordsSection = .files
+    }
+
+    /// 설정의 일반 구역으로 (권한·알림 꺼짐 안내)
+    func openGeneralSettings() {
+        selectedTab = .settings
+        settingsSection = .general
     }
 
     func cancelCodexModelLoading(clear: Bool = false) {
@@ -491,7 +575,7 @@ final class AppState: ObservableObject {
             }
             break
         }
-        if applied { graphVersion += 1; refreshTasks(); chat?.projects.check() }
+        if applied { graphVersion += 1; refreshTasks() }
         refresh()
     }
 
@@ -514,7 +598,10 @@ final class AppState: ObservableObject {
         let collectorSettings = settings.collector
         let client = makeClient()
         let cardsOn = settings.screenCards && settings.captureScreenshots
-        if let db { suggester = FolderSuggester(db: db, llm: makeQuickClient()) }
+        if let db {
+            suggester = FolderSuggester(db: db, llm: makeQuickClient())
+            recordingPipeline = makeRecordingPipeline(db)
+        }
         folderIndex = nil                                   // 검색 폴더가 바뀌었을 수 있으니 다음 제안 때 다시 색인
         Task { [coordinator, batcher, consolidator] in
             await coordinator?.update(settings: collectorSettings)
@@ -548,11 +635,11 @@ final class AppState: ObservableObject {
     func refresh() {
         guard let store else { return }
         let startOfDay = Calendar.current.startOfDay(for: Date()).timeIntervalSince1970
-        if let counts = try? store.counts(since: startOfDay) {
-            todayCount = counts.total
-            pendingCount = counts.unprocessed
-        }
         // 값이 같으면 @Published 를 건드리지 않는다. 5초마다 전체 화면이 다시 그려지는 것을 막는다.
+        if let counts = try? store.counts(since: startOfDay) {
+            if counts.total != todayCount { todayCount = counts.total }
+            if counts.unprocessed != pendingCount { pendingCount = counts.unprocessed }
+        }
         let newRecent = (try? store.recent(limit: 500)) ?? []
         if newRecent != recent { recent = newRecent }
         let newBatches = (try? store.recentBatchSummaries(limit: 100)) ?? []

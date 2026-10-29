@@ -6,7 +6,7 @@ import XCTest
 @MainActor
 final class WindowGlassTests: XCTestCase {
     func testMainWindowLetsTheDesktopShowThroughTheGlass() {
-        let state = AppState(preview: { s in s.phase = .ready; s.selectedTab = .tasks })
+        let state = AppState(preview: { s in s.phase = .ready; s.selectedTab = .records })
         let host = NSHostingView(rootView: AnyView(MainWindow().environmentObject(state)))
         host.frame = NSRect(x: 0, y: 0, width: 1180, height: 716)
         let window = NSWindow(contentRect: host.frame, styleMask: [.titled], backing: .buffered, defer: false)

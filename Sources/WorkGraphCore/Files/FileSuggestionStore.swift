@@ -57,6 +57,18 @@ public struct FileSuggestionStore: Sendable {
         try db.writer.read { try FileSuggestion.fetchAll($0, sql: "SELECT * FROM file_suggestions ORDER BY ts DESC LIMIT ?", arguments: [limit]) }
     }
 
+    /// 결정한 제안(파일 > 지난 기록) 한 쪽: 최근 것부터
+    public func decided(limit: Int, offset: Int) throws -> [FileSuggestion] {
+        try db.writer.read {
+            try FileSuggestion.fetchAll($0, sql: "SELECT * FROM file_suggestions WHERE status != 'pending' ORDER BY ts DESC, id DESC LIMIT ? OFFSET ?",
+                                        arguments: [limit, offset])
+        }
+    }
+
+    public func decidedCount() throws -> Int {
+        try db.writer.read { try Int.fetchOne($0, sql: "SELECT COUNT(*) FROM file_suggestions WHERE status != 'pending'") ?? 0 }
+    }
+
     public func update(_ suggestion: FileSuggestion) throws {
         try db.writer.write { try suggestion.update($0) }
     }

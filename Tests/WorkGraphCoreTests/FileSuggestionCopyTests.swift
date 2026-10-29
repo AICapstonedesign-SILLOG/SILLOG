@@ -24,4 +24,14 @@ final class FileSuggestionCopyTests: XCTestCase {
         XCTAssertEqual(FileSuggestionCopy.folderLabel("/Volumes/USB/자료", home: home), "Volumes / USB / 자료")
         XCTAssertEqual(FileSuggestionCopy.folderLabel("/Users/meow/a", home: home), "Users / meow / a", "이름만 홈으로 시작하는 다른 폴더")
     }
+
+    func testRecordingNotificationCopy() {
+        let home = "/Users/me"
+        XCTAssertEqual(FileSuggestionCopy.recordingTitle, "받아쓴 녹음을 정리할까요?")
+        XCTAssertEqual(FileSuggestionCopy.recordingBody(fileName: "2026-10-10 자료구조 3주차 강의.md", folder: "/Users/me/Documents/학교/자료구조", home: home),
+                       "'2026-10-10 자료구조 3주차 강의.md'를 문서 / 학교 / 자료구조 폴더로 옮겨 보세요.")
+        XCTAssertEqual(FileSuggestionCopy.transcribedTitle, "녹음을 받아썼어요")
+        XCTAssertEqual(FileSuggestionCopy.transcribedBody(fileName: "2026-10-10 회의.md", folder: "/Users/me/Documents/Sillog 녹음", home: home),
+                       "'2026-10-10 회의.md'를 문서 / Sillog 녹음 폴더에 저장했어요.")
+    }
 }

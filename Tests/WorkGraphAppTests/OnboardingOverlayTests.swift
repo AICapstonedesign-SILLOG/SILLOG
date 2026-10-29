@@ -8,12 +8,12 @@ import WorkGraphCore
 /// 온보딩 시트가 떠 있는 메인 창을 화면 밖 창에 그려 키보드와 포커스가 시트에만 가는지 본다
 @MainActor
 final class OnboardingOverlayTests: XCTestCase {
-    /// 다시 로그인한 직후: 시트에는 "로그인 완료, 다음"(기본 버튼)이 켜져 있고, 시트 뒤 파일 탭에도 기본 버튼 "옮기기" 가 있다
+    /// 다시 로그인한 직후: 시트에는 "로그인 완료, 다음"(기본 버튼)이 켜져 있고, 시트 뒤 기록 자료의 파일 구역에도 기본 버튼 "옮기기" 가 있다
     private func signedInOverFiles() -> AppState {
         AppState(preview: { s in
             s.phase = .permissions
             s.onboardingStep = .login
-            s.selectedTab = .files
+            s.selectedTab = .records; s.recordsSection = .files
             s.fileSuggestions = [FileSuggestion(id: 1, ts: 0, path: "/tmp/sillog-test.pdf", fileName: "sillog-test.pdf", originUrl: nil,
                                                 suggestedFolder: "/tmp", confidence: 0.9, reason: nil, source: "llm")]
         })
@@ -46,7 +46,7 @@ final class OnboardingOverlayTests: XCTestCase {
     }
 
     func testSheetTakesFocusAwayFromATextFieldBehindIt() {
-        let state = AppState(preview: { s in s.phase = .ready; s.selectedTab = .files })
+        let state = AppState(preview: { s in s.phase = .ready; s.selectedTab = .records; s.recordsSection = .files })
         let window = show(MainWindow(), state)
         let field = NSTextView(frame: NSRect(x: 0, y: 0, width: 200, height: 40))       // 채팅 입력칸(NSTextView) 대신
         window.contentView?.addSubview(field)

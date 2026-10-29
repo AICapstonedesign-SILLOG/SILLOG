@@ -75,6 +75,61 @@ extension AppState {
         }) ?? []
     }
 
+    /// 업무 드로어의 자료 탭: 그래프 업무 팝업과 같은 기준의 종류별 자료와 같은 맥락 업무
+    func taskMaterials(_ taskId: Int64) -> TaskMaterials {
+        guard let db else { return TaskMaterials() }
+        return (try? db.writer.read { try TaskMaterials.read(GraphTx($0), taskId: taskId) }) ?? TaskMaterials()
+    }
+
+    // MARK: 업무 드로어
+
+    /// 업무 드로어를 그 업무로 연다 (업무 목록, 그래프, 같은 맥락 업무에서 누를 때)
+    func openTaskDetail(id: Int64) {
+        selectedTaskId = id
+        taskDetailOpen = true
+    }
+
+    /// 그래프에서 업무를 눌렀을 때: 노드 키로 업무를 찾는다. 목록에 없으면 한 번 새로 읽어 본다
+    func openTaskDetail(key: String) {
+        if !taskList.contains(where: { $0.key == key }) { refreshTasks() }
+        guard let task = taskList.first(where: { $0.key == key }) else { return }
+        openTaskDetail(id: task.id)
+    }
+
+    /// 업무 드로어의 '이 업무로 묻기': 채팅 탭에서 그 업무만 보는 새 대화
+    func askAbout(task: TaskSummary) {
+        askAbout(ChatFocus(kind: .task, key: task.key, title: task.title))
+    }
+
+    /// 업무 목록 분야 폴더의 '이 분야로 묻기': 그 분야의 업무 전체만 보는 새 대화
+    func askAbout(theme title: String) {
+        let key = db.flatMap { db in try? db.writer.read { try String.fetchOne($0, sql: "SELECT key FROM nodes WHERE label = ? AND title = ?", arguments: [NodeLabel.theme, title]) } } ?? title
+        askAbout(ChatFocus(kind: .theme, key: key, title: title))
+    }
+
+    private func askAbout(_ focus: ChatFocus) {
+        guard let chat else { return }
+        chat.newConversation(focus: [focus])
+        taskDetailOpen = false
+        selectedTab = .chat
+    }
+
+    /// 자료 열기: 자료 키(file:·웹 주소·arxiv:·doi:·local:·recording:). 그래프 카드와 업무 드로어가 함께 쓴다
+    func openGraphItem(uri: String) {
+        if uri.hasPrefix("recording:") { openRecordingText(key: uri); return }   // 녹음은 받아쓴 글 .md 를 연다
+        guard let url = URINormalizer.openableURL(forKey: uri, home: NSHomeDirectory()) else { return }
+        if !NSWorkspace.shared.open(url) { AppLog.write("열기 실패: \(uri)") }
+    }
+
+    /// 앱 열기: 번들 id. "excluded" 는 기록하지 않는 앱 묶음이라 열지 않는다
+    func openApp(bundle: String) {
+        guard bundle != "excluded" else { return }
+        guard let app = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundle) else { AppLog.write("앱을 찾지 못함: \(bundle)"); return }
+        let configuration = NSWorkspace.OpenConfiguration()
+        configuration.activates = true
+        NSWorkspace.shared.openApplication(at: app, configuration: configuration)
+    }
+
     // MARK: 다시 열기
 
     func prepareResume(taskId: Int64) {

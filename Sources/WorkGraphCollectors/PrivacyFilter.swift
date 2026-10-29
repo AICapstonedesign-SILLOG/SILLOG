@@ -15,6 +15,9 @@ public struct PrivacyFilter: Sendable {
         "시크릿", "개인정보 보호 브라우징", "프라이빗 브라우징", "개인 정보 보호 브라우징",
     ]
 
+    /// 실록 자신의 번들 ID. `swift run` 처럼 번들 없이 실행하면 ID 가 없어서, 수집기가 번들 없는 앱에 붙이는 이름으로 대신한다
+    public static let selfBundle = Bundle.main.bundleIdentifier ?? "unknown.\(ProcessInfo.processInfo.processName)"
+
     public var excludedBundles: Set<String>
 
     public init(excludedBundles: Set<String> = PrivacyFilter.defaultExcludedBundles) {
@@ -22,7 +25,7 @@ public struct PrivacyFilter: Sendable {
     }
 
     public func isExcluded(bundle: String) -> Bool {
-        excludedBundles.contains(bundle) || bundle == Bundle.main.bundleIdentifier
+        excludedBundles.contains(bundle) || bundle == Self.selfBundle
     }
 
     /// 기본 제외 목록의 표시 이름 (설치되지 않은 앱도 이름은 보여주기 위해)

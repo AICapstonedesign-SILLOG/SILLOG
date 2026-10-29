@@ -5,7 +5,7 @@ import WorkGraphCore
 /// 스냅샷으로 그릴 화면 목록. 이름은 Figma 화면 번호를 따른다 (Figma 에서 내보낸 같은 이름의 PNG 와 나란히 본다)
 @MainActor
 enum SnapshotCatalog {
-    static var all: [Snapshot] { menus + windows + activity + chat + storage }
+    static var all: [Snapshot] { menus + windows + activity + chat + storage + [mathAnswer] + recording }
 
     /// Figma 창(760) 에서 제목 줄(44)을 뺀 내용 영역
     static let window = CGSize(width: 1180, height: 716)
@@ -36,6 +36,36 @@ enum SnapshotCatalog {
         ]
     }
 
+    /// 녹음: 메뉴 막대(녹음 중, 받아쓰는 중, 마이크 권한 꺼짐), 보관함 녹음 상세, 보관함 목록
+    static var recording: [Snapshot] {
+        let menuShots = [
+            shot("REC-01", MenuBarView()) { s in
+                s.phase = .ready; s.status = collector(); s.todayCount = 62; s.pendingCount = 6; s.taskList = recentTasks
+                s.activeRecording = ActiveRecording(id: 1, startedAt: Date().timeIntervalSince1970 - 751)
+            },
+            shot("REC-02", MenuBarView()) { s in
+                s.phase = .ready; s.status = collector(); s.todayCount = 62; s.pendingCount = 6; s.taskList = recentTasks
+                s.recordingWork = .transcribing(0.37)
+            },
+            shot("REC-03", MenuBarView()) { s in
+                s.phase = .ready; s.status = collector(); s.todayCount = 62; s.pendingCount = 6
+                s.recordingProblem = .microphone
+            },
+            // 리뷰 포커스 1: 일시정지돼도 녹음은 따로 돈다 (W7 메뉴 + 녹음 중 줄)
+            shot("REC-06", MenuBarView()) { s in
+                s.phase = .ready; s.status = collector(paused: true)
+                s.todayCount = 8; s.pendingCount = 2; s.lastBatchText = "14:05 정리 완료(새 업무 2개, 자료 5개)"
+                s.activeRecording = ActiveRecording(id: 1, startedAt: Date().timeIntervalSince1970 - 751)
+            },
+            // 리뷰 포커스 1: 로그인 전(W2)에도 녹음 중이면 끝내기 줄만 보인다 (시작 버튼은 없다)
+            shot("REC-07", MenuBarView()) { s in
+                s.phase = .login
+                s.activeRecording = ActiveRecording(id: 1, startedAt: Date().timeIntervalSince1970 - 751)
+            },
+        ]
+        return menuShots + [recordingDetailShot()] + [recordingLibraryShot()].compactMap { $0 }
+    }
+
     static var windows: [Snapshot] {
         [
             shot("OUT-01", MainWindow(), size: window) { s in loginStep(s) },
@@ -52,13 +82,42 @@ enum SnapshotCatalog {
             shot("OUT-W1", MainWindow(), size: window) { s in s.phase = .login; s.loginBlocked = true },
             shot("OUT-W3", MainWindow(), size: window) { s in s.startupError = AppState.alreadyRunningMessage },
             shot("OUT-W4", MainWindow(), size: window) { s in s.bootstrapped = false },
-            // 업무 탭: 분야 폴더 안에 업무 (파일 트리)
+            // 왼쪽 아이콘 줄 옆에 늘 열린 업무 목록(분야 폴더 안에 업무), 본문은 기록 자료의 파일
             shot("TK-01", MainWindow(), size: window) { s in
-                s.phase = .ready; s.status = collector(); s.selectedTab = .tasks; s.taskList = themedTasks
+                s.phase = .ready; s.status = collector(); s.selectedTab = .records; s.taskList = themedTasks
+            },
+            // 업무를 누르면(목록이든 그래프든) 업무 드로어의 상세가 목록 오른쪽으로 펼쳐지고 본문은 오른쪽으로 밀려 좁아진다 (×, Esc 로 접는다)
+            // 기본 창(1180)에서는 상세가 375 로 줄어 단추가 이름 아래 줄로, 넓은 창에서는 460 에 나란히
+            shot("TK-02", MainWindow(), size: window) { s in
+                s.phase = .ready; s.status = collector(); s.selectedTab = .graph; s.taskList = recentTasks
+                s.selectedTaskId = 1; s.taskDetailOpen = true
+            },
+            shot("TK-02-WIDE", MainWindow(), size: CGSize(width: 1500, height: 900)) { s in
+                s.phase = .ready; s.status = collector(); s.selectedTab = .graph; s.taskList = recentTasks
+                s.selectedTaskId = 1; s.taskDetailOpen = true
             },
             shot("OUT-W5", MainWindow(), size: window) { s in
                 s.phase = .ready; s.status = collector(); s.batchRunning = true; s.pendingCount = 6
-                s.fileSuggestions = pendingFiles(2); s.taskList = recentTasks; s.selectedTab = .tasks
+                s.fileSuggestions = pendingFiles(2); s.taskList = recentTasks; s.selectedTab = .records
+            },
+            // 기록 자료 > 지난 기록 탭: 20줄씩 쪽으로 나눠 ‹ 1 2 3 › (45개 중 2쪽을 보는 중)
+            shot("FL-PAGES", MainWindow(), size: window) { s in
+                s.phase = .ready; s.status = collector(); s.taskList = recentTasks; s.selectedTab = .records; s.recordsSection = .history
+                s.fileSuggestions = decidedFiles(3); s.fileHistoryTotal = 45; s.fileHistoryPage = 1
+            },
+            // 설정: 위쪽 글자 탭(일반, AI 연결). 일반은 권한 타일, 수집, 기록하지 않을 앱, 저장 공간, 앱 실행을 한 쪽에
+            shot("ST-GENERAL", MainWindow(), size: window) { s in
+                s.phase = .ready; s.status = collector(accessibility: true, screenRecording: false); s.taskList = recentTasks
+                s.selectedTab = .settings; s.settingsSection = .general
+            },
+            shot("ST-AI", MainWindow(), size: window) { s in
+                s.phase = .ready; s.status = collector(); s.taskList = recentTasks
+                s.selectedTab = .settings; s.settingsSection = .ai
+            },
+            // 설정의 활동 로그: 대기와 정리 묶음을 한 줄기로
+            shot("LG-01", MainWindow(), size: window) { s in
+                s.phase = .ready; s.status = collector(); s.taskList = recentTasks
+                s.selectedTab = .settings; s.settingsSection = .activity
             },
         ]
     }
@@ -72,6 +131,23 @@ enum SnapshotCatalog {
         ]
     }
 
+    /// 채팅 답의 수식: 블록 행렬(\text{①}, \qquad), 글줄 수식, \text 안 한글, 분수
+    static var mathAnswer: Snapshot {
+        let answer = #"""
+        두 행렬을 비교하면 이렇습니다.
+
+        \[
+        \text{① }\begin{pmatrix}1&0\\0&1\end{pmatrix}\qquad\text{② }\begin{pmatrix}1&1\\1&1\end{pmatrix}
+        \]
+
+        ①은 항등행렬이라 $\det = 1$ 이고, ②는 $\det = 1\cdot1 - 1\cdot1 = 0$ 이라 역행렬이 없어요. 넓이는 \(\text{넓이} = \frac{1}{2}ab\) 로 구해요.
+
+        $$\sum_{k=1}^{n} k = \frac{n(n+1)}{2}$$
+        """#
+        let view = ChatMessageText(text: answer, sources: [], onSource: { _ in }).frame(width: 640).padding(24).background(Color.white)
+        return Snapshot(name: "CH-math", size: CGSize(width: 688, height: 420), view: AnyView(view.environmentObject(AppState(preview: { _ in }))))
+    }
+
     /// 채팅: 머리의 모델 칩 (누르면 그 자리에서 채팅 모델을 고른다)
     static var chat: [Snapshot] {
         guard let database = try? WGDatabase.inMemory() else { return [] }
@@ -83,17 +159,57 @@ enum SnapshotCatalog {
             let offline = OpenAICompatClient(baseURL: URL(string: "http://localhost:5010/v1")!, model: "preview", apiKey: nil)   // 그리기만 하고 부르지 않는다
             s.chat = ChatState(db: database, makeClient: { .model(offline) }, makeProjectClient: { offline })
         })
-        return [Snapshot(name: "CH-01", size: window, view: AnyView(MainWindow().environmentObject(state)))]
+        return [Snapshot(name: "CH-01", size: window, view: AnyView(MainWindow().environmentObject(state)))] + chatFocus
+    }
+
+    /// 채팅 범위: 업무 하나로 좁힌 대화(정리 전 기록 안내 포함)와 범위 고르기 창
+    private static var chatFocus: [Snapshot] {
+        guard let database = try? WGDatabase.inMemory() else { return [] }
+        try? database.writer.write { conn in
+            let tx = GraphTx(conn)
+            for (index, (key, title, theme)) in [("flask", "Flask 웹앱 개발", "프로젝트"), ("stats", "통계학 수업", "학업"), ("algebra", "선형대수 과제", "학업")].enumerated() {
+                let task = try tx.upsertNode(label: NodeLabel.task, key: key, subtype: nil, title: title,
+                                             props: ["last_active": .number(Double(300 - index))], at: 1)
+                try ThemeGraph.attach(taskId: task, to: theme, tx, now: 1)
+                let session = try tx.upsertNode(label: NodeLabel.session, key: "\(key)-s", subtype: nil, title: title, props: [:], at: 1)
+                try tx.upsertEdge(src: session, dst: task, type: EdgeType.partOf, props: [:], addWeight: 0, at: 1)
+            }
+        }
+        let offline = OpenAICompatClient(baseURL: URL(string: "http://localhost:5010/v1")!, model: "preview", apiKey: nil)   // 그리기만 하고 부르지 않는다
+        let chat = ChatState(db: database, makeClient: { .model(offline) }, makeProjectClient: { offline })
+        chat.newConversation(focus: [ChatFocus(kind: .task, key: "flask", title: "Flask 웹앱 개발"), ChatFocus(kind: .theme, key: "학업", title: "학업")])
+        let state = AppState(preview: { s in
+            s.phase = .ready; s.status = collector(); s.selectedTab = .chat; s.pendingCount = 12
+            s.settings.chatProvider = "codex"; s.settings.chatCodexModel = "gpt-6-luna"
+            s.chat = chat
+        })
+        // 대화를 시작하면 범위는 제목 아래(모델 칩 옆)에 작게
+        var started = ChatConversation(); started.title = "이번 주 학업 정리"
+        started.scope.focus = [ChatFocus(kind: .theme, key: "학업", title: "학업")]
+        try? ChatStore(database).startTurn(conversation: started, user: ConversationMessage(conversationID: started.id, role: "user", text: "이번 주 학업 진행 상황 정리해 줘"),
+                                           answer: ConversationMessage(conversationID: started.id, role: "assistant", text: "이번 주에는 통계학 수업과 선형대수 과제를 진행했어요."))
+        let talking = ChatState(db: database, makeClient: { .model(offline) }, makeProjectClient: { offline })
+        let talkingState = AppState(preview: { s in
+            s.phase = .ready; s.status = collector(); s.selectedTab = .chat
+            s.settings.chatProvider = "codex"; s.settings.chatCodexModel = "gpt-6-luna"
+            s.chat = talking
+        })
+        return [
+            Snapshot(name: "CH-FOCUS", size: window, view: AnyView(MainWindow().environmentObject(state))),
+            Snapshot(name: "CH-FOCUS-HEADER", size: window, view: AnyView(MainWindow().environmentObject(talkingState))),
+            Snapshot(name: "CH-FOCUS-PICKER", size: nil, view: AnyView(ChatFocusPicker(chat: chat).background(.white).environmentObject(state))),
+        ]
     }
 
     /// 저장 공간 설정(기본·항목별 보관일 펼침), 첫 정리 동의 시트, 업무 요약 탭
     static var storage: [Snapshot] {
         [
-            shot("ST-STORAGE", SettingsView(section: .storage), size: window) { s in storageState(s) },
+            shot("ST-STORAGE", SettingsView(), size: window) { s in storageState(s); s.settingsSection = .general },
             shot("ST-STORAGE-ADVANCED", ScrollView { StorageSettingsView(advanced: true).padding(.horizontal, 34).padding(.bottom, 40) }.background(.white),
                  size: CGSize(width: 946, height: 1500)) { s in storageState(s) },
             shot("ST-CLEANUP-CONSENT", CleanupPreviewSheet(preview: sampleCleanup)) { s in storageState(s) },
             digestShot("TK-DIGEST"),
+            materialsShot("TK-MATERIALS"),
         ]
     }
 
@@ -169,8 +285,41 @@ enum SnapshotCatalog {
             for var digest in sampleDigests { digest.id = nil; try DigestStore.save(conn, digest) }
             taskId = task
         }
-        let state = AppState(preview: { s in s.phase = .ready; s.status = collector(); s.selectedTab = .tasks }, database: database)
-        return Snapshot(name: name, size: window, view: AnyView(TasksView(selectedTask: taskId, showingDigests: true).environmentObject(state)))
+        let state = AppState(preview: { s in s.phase = .ready; s.status = collector() }, database: database)
+        return Snapshot(name: name, size: window, view: AnyView(TasksView(selectedTask: taskId, tab: .digests).environmentObject(state)))
+    }
+
+    /// 업무 드로어의 자료 탭: 그래프 업무 팝업과 같은 종류별 자료와 같은 맥락 업무
+    private static func materialsShot(_ name: String) -> Snapshot {
+        let database = try? WGDatabase.inMemory()
+        var taskId: Int64?
+        try? database?.writer.write { conn in
+            let tx = GraphTx(conn)
+            let at = todayAt(14, 32)
+            let node = { (label: String, key: String, subtype: String?, title: String, props: [String: JSONValue]) in
+                try tx.upsertNode(label: label, key: key, subtype: subtype, title: title, props: props, at: at)
+            }
+            let edge = { (src: Int64, dst: Int64, type: String) in _ = try tx.upsertEdge(src: src, dst: dst, type: type, props: [:], addWeight: 0, at: at) }
+            let task = try node(NodeLabel.task, "flask", nil, "Flask 웹앱 개발", ["active_seconds": 9_600, "last_active": .number(at)])
+            let report = try node(NodeLabel.task, "report", nil, "분기 성과 보고서", [:])
+            let s1 = try node(NodeLabel.session, "s1", nil, "로그인 흐름 구현", ["start": .number(todayAt(13, 0)), "end": .number(at)])
+            let s2 = try node(NodeLabel.session, "s2", nil, "보고서 초안", ["start": .number(todayAt(11, 0))])
+            try edge(s1, task, EdgeType.partOf); try edge(s2, report, EdgeType.partOf)
+            for (key, subtype, title) in [("file:///Users/me/flask/app.py", "CodeFile", "app.py"), ("file:///Users/me/flask/auth.py", "CodeFile", "auth.py"),
+                                          ("https://flask.palletsprojects.com/quickstart/", "WebPage", "Flask 공식 문서"),
+                                          ("https://stackoverflow.com/q/1", "WebPage", "세션 쿠키가 저장되지 않을 때")] {
+                try edge(s1, try node(NodeLabel.resource, key, subtype, title, [:]), EdgeType.touched)
+            }
+            try edge(s2, try node(NodeLabel.resource, "https://flask.palletsprojects.com/quickstart/", "WebPage", "Flask 공식 문서", [:]), EdgeType.touched)
+            try edge(s1, try node(NodeLabel.app, "com.microsoft.VSCode", nil, "Code", [:]), EdgeType.used)
+            try edge(s1, try node(NodeLabel.app, "com.google.Chrome", nil, "Google Chrome", [:]), EdgeType.used)
+            try edge(task, try node(NodeLabel.topic, "topic:login", nil, "로그인 흐름", [:]), EdgeType.about)
+            try edge(s1, try node(NodeLabel.problem, "problem:csrf", nil, "CSRF 토큰 누락", [:]), EdgeType.hit)
+            try edge(try node(NodeLabel.laterItem, "later:deploy", nil, "배포 환경 변수 정리", [:]), task, EdgeType.forTask)
+            taskId = task
+        }
+        let state = AppState(preview: { s in s.phase = .ready; s.status = collector() }, database: database)
+        return Snapshot(name: name, size: window, view: AnyView(TasksView(selectedTask: taskId, tab: .materials).environmentObject(state)))
     }
 
     private static func batchShot(_ name: String, _ view: ActivityLogView, failedFirst: Bool = false) -> Snapshot {
@@ -199,6 +348,41 @@ enum SnapshotCatalog {
         }
     }
 
+    /// 보관함 녹음 상세: 녹음 파일과 받아쓴 글이 있는 상태 (임시 폴더에 두 파일을 만든다)
+    private static func recordingDetailShot() -> Snapshot {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("sillog-snapshot-recording", isDirectory: true)
+        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let audio = folder.appendingPathComponent("7.m4a")
+        let text = folder.appendingPathComponent("2026-10-10 자료구조 3주차 강의.md")
+        try? Data("a".utf8).write(to: audio)
+        try? Data("# 자료구조 3주차 강의".utf8).write(to: text)
+        let state = AppState(preview: { s in s.phase = .ready })
+        let view = RecordingDetailView(recording: sampleRecording(audioPath: audio.path, textPath: text.path)).environmentObject(state)
+        return Snapshot(name: "REC-04", size: CGSize(width: 640, height: 520), view: AnyView(view))
+    }
+
+    /// 보관함 '전체 종류'에 섞인 녹음
+    private static func recordingLibraryShot() -> Snapshot? {
+        guard let database = try? WGDatabase.inMemory() else { return nil }
+        var recording = sampleRecording(audioPath: "/tmp/7.m4a", textPath: NSHomeDirectory() + "/Documents/학교/자료구조/2026-10-10 자료구조 3주차 강의.md")
+        recording.id = nil
+        _ = try? RecordingStore(database).insert(recording)
+        let state = AppState(preview: { s in
+            s.phase = .ready; s.status = collector(); s.selectedTab = .records; s.recordsSection = .library
+            s.recordings = (try? RecordingStore(database).all()) ?? []
+            let offline = OpenAICompatClient(baseURL: URL(string: "http://localhost:5010/v1")!, model: "preview", apiKey: nil)   // 그리기만 하고 부르지 않는다
+            s.chat = ChatState(db: database, makeClient: { .model(offline) }, makeProjectClient: { offline })
+        }, database: database)
+        return Snapshot(name: "REC-05", size: window, view: AnyView(MainWindow().environmentObject(state)))
+    }
+
+    private static func sampleRecording(audioPath: String, textPath: String) -> Recording {
+        Recording(id: 7, startedAt: todayAt(15, 32), endedAt: todayAt(15, 32) + 3_130, duration: 3_130, audioPath: audioPath, textPath: textPath,
+                  title: "자료구조 3주차 강의", summary: "연결 리스트와 스택의 구현을 예제로 설명한 강의.",
+                  transcript: "오늘은 연결 리스트를 봅니다.\n노드는 값과 다음 노드를 가리키는 포인터를 가집니다.\n스택은 리스트 앞쪽에서 넣고 뺍니다.",
+                  status: .ready, readyAt: Date().timeIntervalSince1970 - 2 * 86_400)
+    }
+
     // MARK: 예시 상태
 
     private static func shot<V: View>(_ name: String, _ view: V, size: CGSize? = nil, _ configure: (AppState) -> Void) -> Snapshot {
@@ -206,14 +390,14 @@ enum SnapshotCatalog {
         return Snapshot(name: name, size: size, view: AnyView(view.environmentObject(state)))
     }
 
-    /// 시트 뒤에는 업무 탭(그래프 탭은 웹 보기라 스냅샷에 안 그려진다)
+    /// 시트 뒤에는 기록 자료 탭(그래프 탭은 웹 보기라 스냅샷에 안 그려진다)
     private static func loginStep(_ s: AppState) {
-        s.phase = .login; s.onboardingStep = .login; s.selectedTab = .tasks
+        s.phase = .login; s.onboardingStep = .login; s.selectedTab = .records
         s.taskList = recentTasks; s.fileSuggestions = pendingFiles(2); s.pendingCount = 6
     }
 
     private static func permissionStep(_ s: AppState, _ grants: PermissionGrants) {
-        s.phase = .permissions; s.onboardingStep = .permissions; s.permissionGrants = grants; s.selectedTab = .tasks
+        s.phase = .permissions; s.onboardingStep = .permissions; s.permissionGrants = grants; s.selectedTab = .records
         s.taskList = recentTasks; s.fileSuggestions = pendingFiles(2); s.pendingCount = 6
     }
 
@@ -245,6 +429,17 @@ enum SnapshotCatalog {
         ]
         return rows.enumerated().map { i, r in
             TaskSummary(id: Int64(i + 1), key: "t\(i)", title: r.0, taskType: r.2, activeSeconds: r.3, lastActive: todayAt(r.4, r.5), sessionCount: 1, theme: r.1)
+        }
+    }
+
+    /// 지난 기록 줄: 옮김(되돌리기 단추)과 무시(단추 없음)를 섞는다
+    private static func decidedFiles(_ count: Int) -> [FileSuggestion] {
+        (0..<count).map { (index: Int) -> FileSuggestion in
+            let name = "report\(index).pdf"
+            let ignored = index == 1
+            return FileSuggestion(id: Int64(index + 100), ts: 0, path: "/tmp/" + name, fileName: name, originUrl: nil,
+                                  suggestedFolder: "/tmp/학교", confidence: 0.9, reason: nil, source: "llm",
+                                  status: ignored ? "ignored" : "moved", movedTo: ignored ? nil : "/tmp/학교/" + name)
         }
     }
 

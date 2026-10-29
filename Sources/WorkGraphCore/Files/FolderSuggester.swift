@@ -7,13 +7,21 @@ import Foundation
 /// 전에 수락·선택한 폴더는 규칙이 아니라 힌트로만 준다. 자동으로 옮기지 않는다. 사용자가 확인하면 옮기고, 되돌릴 수 있다.
 public struct FolderSuggester: Sendable {
     public struct Context: Sendable {
-        public var recentTitles: [String]         // 받기 직전 10분 동안 본 창 제목·주소
+        /// 무엇을 정리하는지: 내려받은 파일 또는 받아쓴 녹음
+        public enum Kind: String, Sendable { case download, recording }
+
+        public var recentTitles: [String]         // 받기 직전 10분 동안 본 창 제목·주소 (녹음은 녹음하는 동안 본 것)
         public var screenText: String?            // 받기 직전 화면의 텍스트 앞부분 (강의 사이트의 과목명·주차 등)
         public var openTasks: [TaskDigest]
         public var currentTaskKey: String?
         public var now: Double
-        public init(recentTitles: [String], screenText: String? = nil, openTasks: [TaskDigest], currentTaskKey: String? = nil, now: Double) {
+        /// 파일 내용 발췌 (받아쓴 녹음: 요약 + 받아쓴 글 앞부분)
+        public var contentExcerpt: String?
+        public var kind: Kind
+        public init(recentTitles: [String], screenText: String? = nil, openTasks: [TaskDigest], currentTaskKey: String? = nil, now: Double,
+                    contentExcerpt: String? = nil, kind: Kind = .download) {
             self.recentTitles = recentTitles; self.screenText = screenText; self.openTasks = openTasks; self.currentTaskKey = currentTaskKey; self.now = now
+            self.contentExcerpt = contentExcerpt; self.kind = kind
         }
     }
 
@@ -48,6 +56,7 @@ public struct FolderSuggester: Sendable {
         contextStrings += context.openTasks.flatMap { [$0.title] + $0.topics }
         if let originURL { contextStrings.append(originURL) }
         if let screenText = context.screenText { contextStrings.append(String(screenText.prefix(300))) }
+        if let excerpt = context.contentExcerpt { contextStrings.append(String(excerpt.prefix(300))) }   // 받아쓴 글의 과목·주제가 후보 순위에 들어간다
         var candidates = index.rank(fileName: fileName, context: contextStrings, limit: candidateLimit).filter { $0.path != fileDir }
         for (_, folder) in hints where !candidates.contains(where: { $0.path == folder }) {
             if let known = index.folders.first(where: { $0.path == folder }) { candidates.insert(known, at: 0) }
@@ -55,7 +64,7 @@ public struct FolderSuggester: Sendable {
         guard !candidates.isEmpty else { return nil }
 
         let prompt = Self.prompt(fileName: fileName, originURL: originURL, candidates: candidates, context: context, home: home, hints: hints)
-        let result = try await llm.callFunction(system: Self.system, user: prompt, tool: Self.tool)
+        let result = try await llm.callFunction(system: Self.system(for: context.kind), user: prompt, tool: Self.tool)
         guard let object = try? JSONSerialization.jsonObject(with: result.arguments) as? [String: Any] else { return nil }
         let chosen = (object["folder"] as? String ?? "").trimmingCharacters(in: .whitespaces)
         let confidence = (object["confidence"] as? NSNumber)?.doubleValue ?? 0
@@ -157,8 +166,19 @@ public struct FolderSuggester: Sendable {
     Always answer by calling suggest_folder.
     """
 
+    static let recordingSystem = """
+    You file the transcript of a voice recording the user just made into one of the user's existing folders.
+    Judge from what was said (CONTENT: the course, topic or project it is about), the file name, and what the user was looking at and working on while recording (window titles, recent tasks).
+    CANDIDATES are real folders with a few of the files already inside. Pick the single best candidate: the folder of the same course, project or meeting series. Use the most specific folder that fits, not a parent.
+    Earlier choices, if given, are hints about the user's habits, not rules.
+    If no candidate clearly fits, return an empty folder with low confidence. Never invent a path: the folder must be copied exactly from CANDIDATES.
+    Always answer by calling suggest_folder.
+    """
+
+    static func system(for kind: Context.Kind) -> String { kind == .recording ? recordingSystem : system }
+
     static var tool: ToolSpec {
-        ToolSpec(name: "suggest_folder", description: "Choose the folder the downloaded file belongs in.", parameters: .object([
+        ToolSpec(name: "suggest_folder", description: "Choose the folder the file belongs in.", parameters: .object([
             "type": "object",
             "properties": .object([
                 "folder": .object(["type": "string", "description": "exact path copied from CANDIDATES, or empty if none fits"]),
@@ -172,8 +192,16 @@ public struct FolderSuggester: Sendable {
     static func prompt(fileName: String, originURL: String?, candidates: [FolderIndex.Folder], context: Context, home: String,
                        hints: [(String, String)] = []) -> String {
         var lines = ["FILE: \(fileName)"]
+        if context.kind == .recording { lines.append("THIS FILE IS: the transcript of a voice recording the user just made") }
         if let originURL { lines.append("DOWNLOADED FROM: \(originURL)") }
-        if !context.recentTitles.isEmpty { lines.append("USER WAS LOOKING AT: " + context.recentTitles.prefix(12).joined(separator: " | ")) }
+        if let excerpt = context.contentExcerpt, !excerpt.isEmpty {
+            let flat = String(excerpt.replacingOccurrences(of: "\n", with: " ").prefix(800))
+            lines.append("CONTENT (transcript excerpt): \(flat)")
+        }
+        if !context.recentTitles.isEmpty {
+            let label = context.kind == .recording ? "USER WAS LOOKING AT WHILE RECORDING: " : "USER WAS LOOKING AT: "
+            lines.append(label + context.recentTitles.prefix(12).joined(separator: " | "))
+        }
         if let screenText = context.screenText, !screenText.isEmpty { lines.append("TEXT ON SCREEN WHEN THE FILE ARRIVED: \(screenText.prefix(800))") }
         if !context.openTasks.isEmpty {
             lines.append("USER'S RECENT TASKS: " + context.openTasks.prefix(6).map { "\($0.title) (\($0.taskType ?? "-")\($0.topics.isEmpty ? "" : "; " + $0.topics.joined(separator: ", ")))" }.joined(separator: " | "))
@@ -196,13 +224,15 @@ public struct FolderSuggester: Sendable {
     }
 
     static func encodeContext(_ context: Context) -> String? {
-        let object: [String: Any] = ["titles": Array(context.recentTitles.prefix(12)), "tasks": context.openTasks.prefix(6).map(\.title), "task": context.currentTaskKey ?? ""]
+        let object: [String: Any] = ["titles": Array(context.recentTitles.prefix(12)), "tasks": context.openTasks.prefix(6).map(\.title),
+                                     "task": context.currentTaskKey ?? "", "kind": context.kind.rawValue]
         return (try? JSONSerialization.data(withJSONObject: object)).flatMap { String(data: $0, encoding: .utf8) }
     }
 
     static func decodeContext(_ text: String) -> Context? {
         guard let data = text.data(using: .utf8), let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
         let task = object["task"] as? String
-        return Context(recentTitles: object["titles"] as? [String] ?? [], openTasks: [], currentTaskKey: (task?.isEmpty ?? true) ? nil : task, now: 0)
+        let kind = Context.Kind(rawValue: object["kind"] as? String ?? "") ?? .download
+        return Context(recentTitles: object["titles"] as? [String] ?? [], openTasks: [], currentTaskKey: (task?.isEmpty ?? true) ? nil : task, now: 0, kind: kind)
     }
 }

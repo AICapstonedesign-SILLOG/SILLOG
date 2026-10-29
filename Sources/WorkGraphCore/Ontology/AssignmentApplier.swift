@@ -167,7 +167,7 @@ public struct AssignmentApplier: Sendable {
     /// LLM 이 resource 를 안 적었을 때: 파일·AI 대화·문서류는 자료, 그냥 웹페이지·미리보기·메시지는 아니다
     public static func defaultResource(_ row: ActivityRow) -> Bool {
         if row.isChat || (row.uri?.hasPrefix("file:") ?? false) { return true }
-        return ["CodeFile", "Document", "Design", "Note", "AIChat", "Documentation", "QnA", "Paper", "Video"].contains(row.type ?? "")
+        return ["CodeFile", "Document", "Design", "Note", "AIChat", "Documentation", "QnA", "Paper", "Video", "Recording"].contains(row.type ?? "")
     }
 
     /// existing → id 로 찾고, 못 찾으면 제목으로 찾고, 그래도 없으면 새로 만든다.
