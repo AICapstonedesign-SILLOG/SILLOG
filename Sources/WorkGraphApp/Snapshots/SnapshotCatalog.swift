@@ -100,6 +100,11 @@ enum SnapshotCatalog {
                 s.phase = .ready; s.status = collector(); s.batchRunning = true; s.pendingCount = 6
                 s.fileSuggestions = pendingFiles(2); s.taskList = recentTasks; s.selectedTab = .records
             },
+            // 기록 자료 > 지난 기록 탭: 20줄씩 쪽으로 나눠 ‹ 1 2 3 › (45개 중 2쪽을 보는 중)
+            shot("FL-PAGES", MainWindow(), size: window) { s in
+                s.phase = .ready; s.status = collector(); s.taskList = recentTasks; s.selectedTab = .records; s.recordsSection = .history
+                s.fileSuggestions = decidedFiles(3); s.fileHistoryTotal = 45; s.fileHistoryPage = 1
+            },
             // 설정: 위쪽 글자 탭(일반, AI 연결). 일반은 권한 타일, 수집, 기록하지 않을 앱, 저장 공간, 앱 실행을 한 쪽에
             shot("ST-GENERAL", MainWindow(), size: window) { s in
                 s.phase = .ready; s.status = collector(accessibility: true, screenRecording: false); s.taskList = recentTasks
@@ -424,6 +429,17 @@ enum SnapshotCatalog {
         ]
         return rows.enumerated().map { i, r in
             TaskSummary(id: Int64(i + 1), key: "t\(i)", title: r.0, taskType: r.2, activeSeconds: r.3, lastActive: todayAt(r.4, r.5), sessionCount: 1, theme: r.1)
+        }
+    }
+
+    /// 지난 기록 줄: 옮김(되돌리기 단추)과 무시(단추 없음)를 섞는다
+    private static func decidedFiles(_ count: Int) -> [FileSuggestion] {
+        (0..<count).map { (index: Int) -> FileSuggestion in
+            let name = "report\(index).pdf"
+            let ignored = index == 1
+            return FileSuggestion(id: Int64(index + 100), ts: 0, path: "/tmp/" + name, fileName: name, originUrl: nil,
+                                  suggestedFolder: "/tmp/학교", confidence: 0.9, reason: nil, source: "llm",
+                                  status: ignored ? "ignored" : "moved", movedTo: ignored ? nil : "/tmp/학교/" + name)
         }
     }
 

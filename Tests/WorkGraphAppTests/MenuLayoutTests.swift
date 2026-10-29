@@ -169,13 +169,26 @@ final class MenuLayoutTests: XCTestCase {
         XCTAssertGreaterThan(full.fittingSize.width, TasksPanel.listWidth + 100, "펼치면 상세까지")
     }
 
-    func testRecordsHasFilesAndLibraryTabsOnTop() {
+    // 기록 자료 위쪽 탭: 파일 · 지난 기록 · 보관함 (지난 기록은 파일 구역 아래에 있다가 10/29 탭으로 뺐다)
+    func testRecordsHasFilesHistoryAndLibraryTabsOnTop() {
         let text = text(of: MainWindow()) { s in s.selectedTab = .records; s.recordsSection = .files }
-        for tab in ["파일", "보관함"] {
+        for tab in ["파일", "지난기록", "보관함"] {
             XCTAssertTrue(text.contains(tab), "\(tab) 탭이 보여야 한다: \(text)")
         }
+        XCTAssertEqual(RecordsView.Section.allCases.map(\.rawValue), ["파일", "지난 기록", "보관함"])
         XCTAssertFalse(text.contains("활동로그"), "활동 로그는 설정으로 옮겼다: \(text)")
         XCTAssertTrue(text.contains("정리할파일이없어요"), "고른 구역(파일)의 내용: \(text)")
+    }
+
+    // 파일 탭에는 대기 중인 제안만, 처리한 제안은 지난 기록 탭에
+    func testDecidedSuggestionsLiveInTheHistoryTab() {
+        let decided = FileSuggestion(id: 9, ts: 0, path: "/tmp/회귀분석.pdf", fileName: "회귀분석.pdf", originUrl: nil, suggestedFolder: "/tmp/학교",
+                                     confidence: 0.9, reason: nil, source: "llm", status: "moved", movedTo: "/tmp/학교/회귀분석.pdf")
+        let files = text(of: MainWindow()) { s in s.selectedTab = .records; s.recordsSection = .files; s.fileSuggestions = [decided] }
+        XCTAssertFalse(files.contains("회귀분석"), "파일 탭에는 지난 기록이 없다: \(files)")
+        let history = text(of: MainWindow()) { s in s.selectedTab = .records; s.recordsSection = .history; s.fileSuggestions = [decided] }
+        XCTAssertTrue(history.contains("회귀분석"), "지난 기록 탭: \(history)")
+        XCTAssertTrue(history.contains("되돌리기"), "옮긴 파일은 되돌릴 수 있다: \(history)")
     }
 
     // 활동 로그는 설정의 세 번째 탭: 무엇을 기록하고 언제 정리했는지 (수집 설정 가까이)

@@ -186,6 +186,7 @@ struct HoverHighlight: ViewModifier {
     }
 }
 
+
 extension View {
     func hoverHighlight(cornerRadius: CGFloat = 8, active: Bool = true) -> some View { modifier(HoverHighlight(cornerRadius: cornerRadius, active: active)) }
 }

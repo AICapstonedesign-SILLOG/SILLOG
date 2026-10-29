@@ -6,6 +6,10 @@ import WorkGraphCore
 extension AppState {
     var pendingFileSuggestions: Int { fileSuggestions.filter { $0.status == "pending" }.count }
 
+    /// 파일 > 지난 기록 한 쪽의 줄 수
+    static let fileHistoryPageSize = 20
+
+    /// 대기 중인 제안은 전부, 지난 기록은 보고 있는 쪽만 불러온다 (쪽이 끝을 넘으면 마지막 쪽)
     func refreshFileSuggestions() {
         guard let db else { return }
         if taskList.isEmpty { refreshTasks() }
@@ -13,13 +17,23 @@ extension AppState {
         if let gone = try? store.closeGone(now: Date().timeIntervalSince1970, fileExists: { FileManager.default.fileExists(atPath: $0) }) {
             gone.forEach { notifier.remove(id: $0) }
         }
-        let fresh = (try? store.recent(limit: 60)) ?? []
-        let pending: [FileSuggestion] = fresh.filter { $0.status == "pending" }
-        let decided: [FileSuggestion] = fresh.filter { $0.status != "pending" }
+        let pending = (try? store.pending()) ?? []
+        let total = (try? store.decidedCount()) ?? 0
+        let size = Self.fileHistoryPageSize
+        let page = min(fileHistoryPage, max(0, (total - 1) / size))
+        let decided = (try? store.decided(limit: size, offset: page * size)) ?? []
+        if page != fileHistoryPage { fileHistoryPage = page }
+        if total != fileHistoryTotal { fileHistoryTotal = total }
         let ordered: [FileSuggestion] = pending + decided
         if ordered != fileSuggestions { fileSuggestions = ordered }
         let badge = pending.isEmpty ? "" : "\(pending.count)"
         if NSApp.dockTile.badgeLabel ?? "" != badge { NSApp.dockTile.badgeLabel = badge }
+    }
+
+    /// 지난 기록의 다른 쪽 (0부터)
+    func showFileHistoryPage(_ page: Int) {
+        fileHistoryPage = max(0, page)
+        refreshFileSuggestions()
     }
 
     /// 수집기가 다운로드 폴더의 새 파일을 알려 주면 여기로 온다.

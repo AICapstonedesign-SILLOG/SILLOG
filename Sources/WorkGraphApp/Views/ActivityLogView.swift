@@ -98,18 +98,21 @@ struct ActivityLogView: View {
     private static let appWidth: CGFloat = 150
     private static let triggerWidth: CGFloat = 72
 
-    /// 엑셀처럼 칸이 나뉜 표: 맨 위 열 머리는 고정, 정리마다 하늘색 묶음 줄 아래에 그 정리에 들어간 기록
+    /// 엑셀처럼 칸이 나뉜 표: 맨 위 열 머리는 고정, 정리마다 하늘색 묶음 줄 아래에 그 정리에 들어간 기록.
+    /// List(AppKit 표)로 그린다: ScrollView 에서는 스크롤할 때마다 짧게 멈칫했다 (10/29 프레임 측정: 1초에 10번 안팎 20ms)
     private var timeline: some View {
-        ScrollView {
-            LazyVStack(alignment: .leading, spacing: 0, pinnedViews: .sectionHeaders) {
-                SwiftUI.Section(header: columnHeader) {
-                    pendingBlock
-                    ForEach(batchRows) { row in batchBlock(row.batch) }
-                }
+        VStack(spacing: 0) {
+            columnHeader                                         // 열 머리는 List 밖 위에 고정 (List 의 고정 머리는 기본 바탕이 깔린다)
+            List {
+                pendingBlock.logRow()
+                ForEach(batchRows) { row in batchBlock(row.batch).logRow() }
             }
-            .overlay(Rectangle().strokeBorder(Brand.line))
-            .padding(.top, 16)
+            .listStyle(.plain)
+            .scrollContentBackground(.hidden)
+            .environment(\.defaultMinListRowHeight, 0)
         }
+        .overlay(Rectangle().strokeBorder(Brand.line))
+        .padding(.top, 16)
     }
 
     /// 손쉬운 사용이 꺼져 있으면 앱 이름만 쌓인다는 안내 (누르면 설정의 일반)
@@ -615,5 +618,14 @@ struct BatchDetail: View {
             .buttonStyle(.plain)
             if isOn.wrappedValue { content() }
         }
+    }
+}
+
+private extension View {
+    /// 활동 로그 표의 List 줄: 칸과 선을 직접 그리므로 양옆 여백(List 가 띄우는 10)·구분선·바탕을 없앤다
+    func logRow() -> some View {
+        listRowInsets(EdgeInsets(top: 0, leading: -10, bottom: 0, trailing: -10))
+            .listRowSeparator(.hidden)
+            .listRowBackground(Color.clear)
     }
 }

@@ -227,8 +227,9 @@ struct TasksPanel: View {
 
 /// 기록 자료 탭: 위쪽 글자 탭(파일 · 보관함)과 고른 구역. 활동 로그는 설정의 세 번째 탭
 struct RecordsView: View {
+    /// 파일(대기 중인 제안) · 지난 기록(처리한 제안) · 보관함
     enum Section: String, CaseIterable, Identifiable {
-        case files = "파일", library = "보관함"
+        case files = "파일", history = "지난 기록", library = "보관함"
         var id: String { rawValue }
     }
 
@@ -240,6 +241,7 @@ struct RecordsView: View {
             Group {
                 switch state.recordsSection {
                 case .files: FilesView()
+                case .history: FileHistoryView()
                 case .library: if let chat = state.chat { LibraryView(library: chat.library) } else { Color.white }
                 }
             }
@@ -273,6 +275,7 @@ private struct ClearWindow: NSViewRepresentable {
             DispatchQueue.main.async { [weak window] in            // 창이 화면에 올라간 뒤 한 번 더 (창 번호가 그때 정해지는 경우)
                 if let window { WindowBlur.apply(Brand.glassBlur, to: window) }
             }
+            if let content = window.contentView { FrameMonitor.shared.start(on: content) }   // 개발용 프레임 측정 (숨은 설정 frameLog)
         }
     }
     func makeNSView(context: Context) -> View { View() }
@@ -315,17 +318,23 @@ struct MainWindow: View {
     }
 
     @EnvironmentObject private var state: AppState
-    /// WORKGRAPH_TAB=chat|records|files|library|settings|activity 로 시작 탭을 고를 수 있다 (개발·스크린샷용).
+    /// WORKGRAPH_TAB=chat|records|files|history|library|settings|activity 로 시작 탭을 고를 수 있다 (개발·스크린샷용).
     static let initialTab: Tab = {
         switch ProcessInfo.processInfo.environment["WORKGRAPH_TAB"] {
         case "settings", "activity": return .settings
         case "chat": return .chat
-        case "records", "files", "library": return .records
+        case "records", "files", "history", "library": return .records
         default: return .graph                                   // 권한·로그인 안내는 온보딩이 맡는다
         }
     }()
-    /// WORKGRAPH_TAB=library 면 기록 자료의 보관함으로 시작한다
-    static let initialRecordsSection: RecordsView.Section = ProcessInfo.processInfo.environment["WORKGRAPH_TAB"] == "library" ? .library : .files
+    /// WORKGRAPH_TAB=history|library 면 기록 자료의 그 구역으로 시작한다
+    static let initialRecordsSection: RecordsView.Section = {
+        switch ProcessInfo.processInfo.environment["WORKGRAPH_TAB"] {
+        case "history": return .history
+        case "library": return .library
+        default: return .files
+        }
+    }()
     /// WORKGRAPH_TAB=activity 면 설정의 활동 로그로 시작한다
     static let initialSettingsSection: SettingsView.Section = ProcessInfo.processInfo.environment["WORKGRAPH_TAB"] == "activity" ? .activity : .general
 

@@ -41,7 +41,11 @@ final class AppState: ObservableObject {
     @Published var selectedTaskId: Int64?
     @Published var taskDetailOpen = false
     /// 파일 정리 제안. 대기 중인 것이 앞에 온다.
+    /// 대기 중인 제안 전부 + 지난 기록의 지금 쪽
     @Published var fileSuggestions: [FileSuggestion] = []
+    /// 파일 > 지난 기록: 보고 있는 쪽(0부터)과 결정한 제안 전체 개수
+    @Published var fileHistoryPage = 0
+    @Published var fileHistoryTotal = 0
     @Published var fileError: String?
     @Published var notificationsDenied = false
     @Published var taskList: [TaskSummary] = []
@@ -126,6 +130,7 @@ final class AppState: ObservableObject {
             self.db = database
             self.store = store
             self.coordinator = coordinator
+            FrameMonitor.shared.screen = { [weak self] in self?.screenName ?? "" }   // 개발용 프레임 측정 로그의 화면 이름
             self.chat = ChatState(db: database, makeClient: { [unowned self] in self.makeChatClient() },
                                   makeProjectClient: { [unowned self] in self.makeClient() })
             var batchConfig = BatchConfig()
@@ -158,6 +163,15 @@ final class AppState: ObservableObject {
 
     /// 개발용 미리보기 (SnapshotCatalog). DB·실행 잠금·수집기를 만들지 않고, configure 가 화면에 필요한 값만 채운다.
     /// database: 정리 상세처럼 DB 에서 읽는 화면을 그릴 때 쓰는 메모리 DB
+    /// 지금 보고 있는 화면 이름 (개발용 프레임 측정 로그에 쓴다)
+    var screenName: String {
+        switch selectedTab {
+        case .records: return "\(selectedTab.rawValue) > \(recordsSection.rawValue)"
+        case .settings: return "\(selectedTab.rawValue) > \(settingsSection.rawValue)"
+        default: return selectedTab.rawValue
+        }
+    }
+
     init(preview configure: (AppState) -> Void, database: WGDatabase? = nil) {
         settings = AppSettings()
         isPreview = true
@@ -621,11 +635,11 @@ final class AppState: ObservableObject {
     func refresh() {
         guard let store else { return }
         let startOfDay = Calendar.current.startOfDay(for: Date()).timeIntervalSince1970
-        if let counts = try? store.counts(since: startOfDay) {
-            todayCount = counts.total
-            pendingCount = counts.unprocessed
-        }
         // 값이 같으면 @Published 를 건드리지 않는다. 5초마다 전체 화면이 다시 그려지는 것을 막는다.
+        if let counts = try? store.counts(since: startOfDay) {
+            if counts.total != todayCount { todayCount = counts.total }
+            if counts.unprocessed != pendingCount { pendingCount = counts.unprocessed }
+        }
         let newRecent = (try? store.recent(limit: 500)) ?? []
         if newRecent != recent { recent = newRecent }
         let newBatches = (try? store.recentBatchSummaries(limit: 100)) ?? []
