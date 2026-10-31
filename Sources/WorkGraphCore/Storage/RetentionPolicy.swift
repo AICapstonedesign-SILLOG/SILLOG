@@ -13,7 +13,7 @@ public struct RetentionPolicy: Codable, Equatable, Sendable {
             case .observations: "활동 기록(앱·창 제목·주소)"
             case .screenCards: "화면 카드"
             case .aiRequests: "AI 도구 요청"
-            case .fileEvents: "파일 기록·정리 제안"
+            case .fileEvents: "파일 기록과 정리 제안"
             }
         }
 

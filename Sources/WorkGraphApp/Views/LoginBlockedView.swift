@@ -67,7 +67,7 @@ struct LoginBlockedView: View {
                 }
                 .font(Brand.suit(14, .medium)).foregroundStyle(.white)
                 .frame(maxWidth: .infinity).frame(height: 46)
-                .background(RoundedRectangle(cornerRadius: 8).fill(Brand.ink))
+                .background(RoundedRectangle(cornerRadius: 8).fill(Brand.accent))
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
@@ -103,25 +103,35 @@ struct LoginBlockedView: View {
         .overlay(alignment: .top) { Rectangle().fill(Brand.line).frame(height: 1) }
     }
 
-    /// 예전 스타일 단계 표시: ① 로그인 —— ② 권한
+    /// 단계 표시(타임라인 레퍼런스): 아래 막대 폭 전체에 걸친 점선 위에 단계를 고르게 나눠 둔다. 지금 단계는 점이 크고 둘레에 옅은 고리, 점 아래에 단계 번호와 이름
     private var footer: some View {
-        HStack(spacing: 0) {
-            stepDot("1", on: true)
-            Text("로그인").font(Brand.suit(13, .medium)).foregroundStyle(Brand.ink).padding(.leading, 11)
-            Rectangle().fill(Brand.line).frame(width: 28, height: 1).padding(.horizontal, 12)
-            stepDot("2", on: false)
-            Text("권한").font(Brand.suit(13)).foregroundStyle(Brand.sub).padding(.leading, 11)
-            Spacer()
+        HStack(alignment: .top, spacing: 0) {
+            step(1, "로그인", on: true).frame(maxWidth: .infinity)
+            step(2, "권한", on: false).frame(maxWidth: .infinity)
         }
-        .padding(.leading, 39)
-        .frame(height: 63)
+        .background(alignment: .top) {
+            DashLine().stroke(Brand.sub.opacity(0.6), style: StrokeStyle(lineWidth: 1, dash: [3, 4])).frame(height: 1).padding(.top, 14)
+        }
+        .padding(.horizontal, 48).padding(.top, 22).padding(.bottom, 20)
+        .frame(maxWidth: .infinity)
         .background(Brand.paper)
     }
 
-    private func stepDot(_ number: String, on: Bool) -> some View {
-        Text(number).font(Brand.suit(11, .medium)).foregroundStyle(on ? Color.white : Brand.sub)
-            .frame(width: 18, height: 18)
-            .background(Circle().fill(on ? Brand.ink : Color.clear))
-            .overlay(Circle().strokeBorder(on ? Brand.ink : Brand.sub))
+    private func step(_ number: Int, _ name: String, on: Bool) -> some View {
+        let tint = on ? Brand.accent : Brand.sub
+        return VStack(spacing: 5) {
+            ZStack {
+                Circle().fill(tint.opacity(on ? 0.18 : 0.16)).frame(width: on ? 28 : 18, height: on ? 28 : 18)
+                Circle().fill(tint).frame(width: on ? 12 : 8, height: on ? 12 : 8)
+            }
+            .frame(height: 28)
+            Text("\(number)단계").font(Brand.suit(11)).foregroundStyle(on ? tint : Brand.sub)
+            Text(name).font(Brand.suit(on ? 14 : 13, on ? .bold : .regular)).foregroundStyle(on ? tint : Brand.gray)
+        }
     }
+}
+
+/// 가로 점선 하나(단계 표시 바탕)
+private struct DashLine: Shape {
+    func path(in rect: CGRect) -> Path { Path { p in p.move(to: CGPoint(x: rect.minX, y: rect.midY)); p.addLine(to: CGPoint(x: rect.maxX, y: rect.midY)) } }
 }

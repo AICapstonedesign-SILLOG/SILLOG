@@ -54,7 +54,7 @@ struct TextBlock: View {
             Text(title).font(Brand.suit(12)).foregroundStyle(Brand.gray)
             ReadOnlyTextView(text: text, monospaced: monospaced)
                 .frame(height: min(height, CGFloat(max(3, text.split(whereSeparator: \.isNewline).count + 1)) * 17 + 18))
-                .background(RoundedRectangle(cornerRadius: 6).fill(Color(hex: 0xF6F5F4)))
+                .background(RoundedRectangle(cornerRadius: 6).fill(Brand.paper))
         }
     }
 }

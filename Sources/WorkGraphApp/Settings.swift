@@ -4,7 +4,7 @@ import WorkGraphCore
 
 /// 사용자 설정. UserDefaults 에 JSON 한 덩어리로 저장한다.
 struct AppSettings: Codable, Equatable {
-    /// "codex" = 앱 안에서 ChatGPT 로그인 후 직접 호출, "openai" = OpenAI 호환 서버(gpt-proxy, Ollama 등)
+    /// "codex" = 앱 안에서 ChatGPT 로그인 후 직접 호출, "ajou" = 아주대 LLM(주소 고정, 키와 모델만), "openai" = OpenAI 호환 서버(gpt-proxy, Ollama 등)
     var llmProvider = "codex"
     /// ChatGPT 로그인 방식에서 쓸 모델. 계정마다 가능한 모델이 달라 설정 화면에서 목록을 받아 고른다.
     var codexModel = CodexResponsesClient.defaultModel
@@ -16,6 +16,10 @@ struct AppSettings: Codable, Equatable {
     var chatBaseURL = "http://localhost:5010/v1"
     var chatModel = "gpt-5.4-mini"
     var chatAPIKey = ""
+    /// 아주대 LLM: OpenAI 호환 서버 설정과 따로 저장해 방식을 바꿔도 서로 지워지지 않는다. 키는 정리와 채팅이 같이 쓴다
+    var ajouAPIKey = ""
+    var ajouModel = AppSettings.ajouDefaultModel
+    var chatAjouModel = AppSettings.ajouDefaultModel
     var batchEnabled = true
     var captureText = true
     var captureScreenshots = true
@@ -53,6 +57,16 @@ struct AppSettings: Codable, Equatable {
         chatBaseURL = try c.decodeIfPresent(String.self, forKey: .chatBaseURL) ?? llmBaseURL
         chatModel = try c.decodeIfPresent(String.self, forKey: .chatModel) ?? llmModel
         chatAPIKey = try c.decodeIfPresent(String.self, forKey: .chatAPIKey) ?? llmAPIKey
+        ajouAPIKey = try c.decodeIfPresent(String.self, forKey: .ajouAPIKey) ?? d.ajouAPIKey
+        ajouModel = try c.decodeIfPresent(String.self, forKey: .ajouModel) ?? d.ajouModel
+        chatAjouModel = try c.decodeIfPresent(String.self, forKey: .chatAjouModel) ?? d.chatAjouModel
+        // 예전에는 아주대 LLM 을 OpenAI 호환 서버 주소로만 구분했다: 그 주소면 아주대 LLM 방식으로 옮긴다
+        if llmProvider == "openai", llmBaseURL.trimmingCharacters(in: .whitespaces) == Self.ajouBaseURL {
+            llmProvider = "ajou"; ajouModel = llmModel; ajouAPIKey = llmAPIKey; llmBaseURL = d.llmBaseURL; llmAPIKey = ""
+        }
+        if chatProvider == "openai", chatBaseURL.trimmingCharacters(in: .whitespaces) == Self.ajouBaseURL {
+            chatProvider = "ajou"; chatAjouModel = chatModel; if ajouAPIKey.isEmpty { ajouAPIKey = chatAPIKey }; chatBaseURL = d.chatBaseURL; chatAPIKey = ""
+        }
         batchEnabled = try c.decodeIfPresent(Bool.self, forKey: .batchEnabled) ?? d.batchEnabled
         captureText = try c.decodeIfPresent(Bool.self, forKey: .captureText) ?? d.captureText
         captureScreenshots = try c.decodeIfPresent(Bool.self, forKey: .captureScreenshots) ?? d.captureScreenshots
@@ -87,5 +101,17 @@ struct AppSettings: Codable, Equatable {
         return settings
     }
 
-    var chatModelName: String { chatProvider == "openai" ? chatModel : chatCodexModel }
+    /// 아주대 LLM: OpenAI 호환 게이트웨이를 쓰는 프리셋 (정리 연결이 이 주소면 아주대 LLM 으로 본다)
+    static let ajouBaseURL = "https://factchat-cloud.mindlogic.ai/v1/gateway"
+    static let ajouDefaultModel = "gpt-6.1-sol"
+    static let ajouSite = URL(string: "https://ajoullm.ajou.ac.kr")!
+
+    /// 정리, 채팅이 API(아주대 LLM 또는 OpenAI 호환 서버)로 가는지. 아니면 ChatGPT 로그인
+    var llmUsesAPI: Bool { llmProvider != "codex" }
+    var chatUsesAPI: Bool { chatProvider != "codex" }
+    /// API 로 갈 때 실제로 쓰는 주소, 모델, 키
+    var llmEndpoint: (url: String, model: String, key: String) { llmProvider == "ajou" ? (Self.ajouBaseURL, ajouModel, ajouAPIKey) : (llmBaseURL, llmModel, llmAPIKey) }
+    var chatEndpoint: (url: String, model: String, key: String) { chatProvider == "ajou" ? (Self.ajouBaseURL, chatAjouModel, ajouAPIKey) : (chatBaseURL, chatModel, chatAPIKey) }
+    var chatModelName: String { chatUsesAPI ? chatEndpoint.model : chatCodexModel }
+    static func providerName(_ provider: String) -> String { ["ajou": "아주대 LLM API", "openai": "OpenAI 호환 서버"][provider] ?? "ChatGPT 계정(Codex)" }
 }

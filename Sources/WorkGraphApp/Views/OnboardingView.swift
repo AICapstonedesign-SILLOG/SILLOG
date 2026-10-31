@@ -1,35 +1,20 @@
+import AVFoundation
+import ServiceManagement
+import Speech
 import SwiftUI
+import UserNotifications
 import WorkGraphCollectors
 import WorkGraphCore
 
-/// 온보딩 시트를 띄우는 덮개: 창 전체를 옅게 덮고 카드(760)를 탭 막대 바로 아래에 둔다 (Figma OUT-01~05).
-/// 창이 낮아 카드가 다 들어가지 않으면 가운데로 올리고, 그래도 넘치면 스크롤한다.
+/// 온보딩 화면 전체: 창 전체를 연한 바탕(#EFECE8)으로 덮고 내용을 가운데에 둔다. 뒤 화면은 비치지 않는다.
+/// 1단계(로그인)는 AI 연결 고르기 → ChatGPT 계정 / 아주대 LLM API / API 키, 2단계는 권한 허용 (Figma 859:1862, 877:2403~2553)
 struct OnboardingOverlay: View {
     let step: OnboardingStep
-    @State private var cardHeight: CGFloat = 0
 
     var body: some View {
-        GeometryReader { geo in
-            ZStack(alignment: .top) {
-                Color(hex: 0x141210, opacity: 0.16)
-                ScrollView {
-                    OnboardingSheet(step: step)
-                        .background(GeometryReader { Color.clear.preference(key: SheetHeightKey.self, value: $0.size.height) })
-                        .padding(.top, OnboardingFlow.sheetTop(available: geo.size.height, card: cardHeight))
-                        .padding(.bottom, 24)
-                        .frame(maxWidth: .infinity)
-                }
-                .scrollBounceBehavior(.basedOnSize)
-            }
-        }
-        .background(ResignFocus())
-        .onPreferenceChange(SheetHeightKey.self) { cardHeight = $0 }
+        OnboardingSheet(step: step)
+            .background(ResignFocus())
     }
-}
-
-private struct SheetHeightKey: PreferenceKey {
-    static let defaultValue: CGFloat = 0
-    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = max(value, nextValue()) }
 }
 
 /// 시트가 뜨는 순간 창의 키보드 포커스를 비운다. 시트 뒤 채팅 입력칸(NSTextView)이나 그래프(WKWebView)가 타이핑을 받지 않게
@@ -42,382 +27,760 @@ private struct ResignFocus: NSViewRepresentable {
     func updateNSView(_ nsView: NSView, context: Context) {}
 }
 
-/// "무엇이 기기 밖으로 나가나요?" 안내. 시트(OUT-01)와 로그인 오류 카드(OUT-W1)가 같이 쓴다.
+/// "무엇이 기기 밖으로 나가나요?" 안내. 로그인 오류 카드(OUT-W1)가 쓴다.
 /// W1 의 Figma 문구는 대표 화면 이미지 전송을 빠뜨려(스크린샷 카드가 기본으로 켜져 있다) 시트 문구로 맞춘다
 enum PrivacyNote {
     static let title = "무엇이 기기 밖으로 나가나요?"
     static let body = "기록은 Mac에 저장돼요. 업무를 정리할 때 창 제목, 주소, 화면 텍스트와 대표 화면 이미지가 연결한 AI로 전송돼요. 채팅에서 조회한 원문, 코드, 문서도 전송될 수 있어요. 허용한 웹 검색과 플러그인은 외부 서비스와 통신해요."
 }
 
-/// 온보딩 카드: 머리(눈썹 글씨, 제목, 닫기), 본문(1 로그인 / 2 권한), 바닥(단계 표시, 다음 버튼)
+// MARK: 색과 그림 (온보딩 전용)
+
+private enum OB {
+    static let bg = Color(hex: 0xEFECE8)
+    static let accent = Color(hex: 0x8A7566)          // 버튼 바탕
+    static let border = Color(hex: 0xDDD7D1)          // 보조 버튼 테두리, 아래 막대 윗선
+    static let chip = Color(hex: 0xEFE9E3)            // 숫자 동그라미, 복사 알약
+    static let field = Color(hex: 0xF5F2EE)           // 카드 안 입력칸
+    static let soft = Color(hex: 0xEEE9E4)            // 카드 안 구분선
+    static let brown = Color(hex: 0x4A3F38)           // 기기 코드, 링크 아이콘
+    static let warn = Color(hex: 0xA9432B)            // 따뜻한 붉은색 안내
+    static let ok = Color(hex: 0x2F8F5B)              // 허용됨
+    static let shadow = Color(hex: 0x6B5A4E, opacity: 0.10)
+}
+
+/// Resources/Brand 의 그림을 한 번만 읽는다 (없으면 nil, 화면은 글자만으로 그린다)
+private enum OnboardingArt {
+    private static let cache = NSCache<NSString, NSImage>()
+    static func image(_ name: String) -> NSImage? {
+        if let hit = cache.object(forKey: name as NSString) { return hit }
+        let url = BundledResources.url(forResource: name, withExtension: "png", subdirectory: "Brand", main: .main) { .module }
+        guard let image = url.flatMap(NSImage.init(contentsOf:)) else { return nil }
+        cache.setObject(image, forKey: name as NSString)
+        return image
+    }
+}
+
+private struct ArtImage: View {
+    let name: String
+    let size: CGFloat
+    var body: some View {
+        Group {
+            if let image = OnboardingArt.image(name) { Image(nsImage: image).resizable().interpolation(.high).scaledToFit() } else { Color.clear }
+        }
+        .frame(width: size, height: size)
+    }
+}
+
+// MARK: 온보딩 시트
+
+/// 1단계에서 고른 연결 방법
+private enum LoginMethod { case choose, chatgpt, ajou, apiKey }
+
 struct OnboardingSheet: View {
     @EnvironmentObject private var state: AppState
-    @Environment(\.dismissWindow) private var dismissWindow
     let step: OnboardingStep
-    @State private var deviceHelpOpen = false
+    @State private var method: LoginMethod = OnboardingSheet.initialMethod
+    @State private var ajouKey = ""
+    @State private var apiURL = ""
+    @State private var apiModel = ""
+    @State private var apiKey = ""
+    @State private var testing = false
+    @State private var notice: String?
+    @StateObject private var perms = OnboardingPermissions()
 
     private let poll = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
-    private var loggedIn: Bool { state.phase != .login }
+    private var connected: Bool { state.phase != .login }
+
+    /// WORKGRAPH_ONBOARDING=chatgpt|ajou|apikey 로 연결 방법 화면에서 시작한다 (개발, 스크린샷용)
+    private static let initialMethod: LoginMethod = {
+        switch ProcessInfo.processInfo.environment["WORKGRAPH_ONBOARDING"] {
+        case "chatgpt": return .chatgpt
+        case "ajou": return .ajou
+        case "apikey": return .apiKey
+        default: return .choose
+        }
+    }()
 
     var body: some View {
-        VStack(spacing: 0) {
-            header
-            if step == .login { loginBody } else { permissionBody }
-            footer
-        }
-        .frame(width: 760)
-        .background(.white)
-        .clipShape(RoundedRectangle(cornerRadius: 8))
-        .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Color(hex: 0x141210, opacity: 0.12)))
-        .shadow(color: Color(hex: 0x141210, opacity: 0.15), radius: 21, y: 14)
-        .onAppear { state.refreshPermissionGrants() }
-        .onReceive(poll) { _ in if step == .permissions { state.refreshPermissionGrants() } }
-    }
-
-    // MARK: 머리 (76, 제목 한 줄)
-
-    private var header: some View {
-        Text(step == .login ? "당신의 일을 기억하는 시작" : "기록을 위한 두 가지 권한")
-            .font(Brand.suit(22)).tracking(-0.77).foregroundStyle(Brand.ink)
-            .padding(.leading, 28)
-            .frame(maxWidth: .infinity, minHeight: 76, maxHeight: 76, alignment: .leading)
-        .background(.white.opacity(0.95))
-        .overlay(alignment: .trailing) {
-            // 닫기: 창만 닫는다. 메뉴 막대는 준비 전(W2)으로 남고, 거기서 다시 열 수 있다
-            Button {
-                state.closeOnboarding()
-                dismissWindow(id: "main")
-            } label: {
-                Image(systemName: "xmark").font(.system(size: 13, weight: .light)).foregroundStyle(Brand.tabText)
-                    .frame(width: 28, height: 28).contentShape(Rectangle())
+        GeometryReader { geo in
+            VStack(spacing: 0) {
+                ScrollView {
+                    page
+                        .padding(.horizontal, 56).padding(.vertical, 24)
+                        .frame(maxWidth: .infinity, minHeight: max(0, geo.size.height - 76), alignment: .center)
+                }
+                .scrollBounceBehavior(.basedOnSize)
+                bottomBar
             }
-            .buttonStyle(.plain)
-            .help("닫기").accessibilityLabel("닫기")
-            .padding(.trailing, 18)
         }
-        .overlay(alignment: .bottom) { Rectangle().fill(Brand.hairline).frame(height: 1) }
+        .background(OB.bg.ignoresSafeArea())
+        .onAppear { state.refreshPermissionGrants(); Task { await perms.refresh() } }
+        .onReceive(poll) { _ in
+            guard step == .permissions else { return }
+            state.refreshPermissionGrants()
+            Task { await perms.refresh() }
+        }
+        // 로그인이 끝나면(새로 연결됐을 때) 바로 권한 단계로
+        .onChange(of: state.phase) { old, new in
+            if step == .login, old == .login, new != .login { useChatGPTProvider(); state.advanceOnboarding() }
+        }
+        .onChange(of: state.codexStatus) { _, new in
+            if step == .login, method == .chatgpt, case .loggedIn = new { useChatGPTProvider(); state.advanceOnboarding() }
+        }
     }
 
-    // MARK: 1. 로그인
-
-    private var loginBody: some View {
-        VStack(spacing: 0) {
-            HStack(spacing: 0) {
-                brandColumn
-                    .frame(width: 260).frame(maxHeight: .infinity)
-                    .overlay(alignment: .trailing) { Rectangle().fill(Brand.line).frame(width: 1) }
-                loginColumn.frame(maxHeight: .infinity, alignment: .top)
+    @ViewBuilder private var page: some View {
+        if step == .permissions {
+            permissionPage
+        } else {
+            switch method {
+            case .choose: choosePage
+            case .chatgpt: chatgptPage
+            case .ajou: ajouPage
+            case .apiKey: apiKeyPage
             }
-            .fixedSize(horizontal: false, vertical: true)
-            privacyNote
         }
     }
 
-    private var brandColumn: some View {
-        VStack(spacing: 0) {
-            Image(nsImage: NSApp.applicationIconImage).resizable().scaledToFit().frame(width: 112, height: 112)
-            Group {
-                if let mark = Brand.wordmark {
-                    Image(nsImage: mark).resizable().scaledToFit().frame(height: 26).accessibilityLabel("SILLOG")
+    // MARK: 공용 조각
+
+    private func heading(_ title: String, _ sub: String) -> some View {
+        VStack(spacing: 10) {
+            Text(title).font(Brand.suit(34, .bold)).tracking(-0.8).foregroundStyle(Brand.ink)
+            Text(sub).font(Brand.suit(16)).foregroundStyle(Brand.gray)
+        }
+        .multilineTextAlignment(.center)
+    }
+
+    private func numberDot(_ n: Int, size: CGFloat = 28) -> some View {
+        Text("\(n)").font(Brand.suit(size > 24 ? 13 : 11, .semibold)).foregroundStyle(OB.brown)
+            .frame(width: size, height: size).background(Circle().fill(OB.chip))
+    }
+
+    private func go(_ next: LoginMethod) {
+        notice = nil
+        method = next
+    }
+
+    // MARK: 1. AI 연결 고르기
+
+    private var choosePage: some View {
+        VStack(spacing: 40) {
+            heading("AI를 하나 연결해요", "기록을 업무별로 정리해 줄 AI예요.")
+            HStack(spacing: 20) {
+                MethodTile(title: "ChatGPT 계정", detail: "쓰던 ChatGPT 구독으로 연결해요") {
+                    ArtImage(name: "openai_logo", size: 72)
+                } action: { chooseChatGPT() }
+                MethodTile(title: "아주대 LLM API", detail: "학교 계정으로 키를 받아요") {
+                    ArtImage(name: "ajou_emblem", size: 76)
+                } action: { go(.ajou) }
+                MethodTile(title: "API 키", detail: "가진 키를 붙여 넣어요") {
+                    Image(systemName: "link").font(.system(size: 54, weight: .regular)).foregroundStyle(OB.brown)
+                        .rotationEffect(.degrees(-45)).frame(width: 72, height: 72)
+                } action: { go(.apiKey) }
+            }
+            .frame(maxWidth: 1060)
+            VStack(spacing: 10) {
+                Text("기록 원본은 이 Mac에만 있어요. 정리할 때만 필요한 내용을 고른 AI로 보내요.")
+                    .font(Brand.suit(13)).foregroundStyle(Brand.gray)
+                if connected {
+                    Text("이미 연결돼 있어요. 바꾸지 않으면 오른쪽 아래 다음으로 넘어가요.")
+                        .font(Brand.suit(13, .medium)).foregroundStyle(OB.ok)
+                }
+            }
+        }
+    }
+
+    /// ChatGPT 계정: 이미 로그인돼 있으면 그대로 다음 단계, 아니면 기기 코드 로그인을 시작한다
+    private func chooseChatGPT() {
+        go(.chatgpt)
+        if case .loggedIn = state.codexStatus { return }
+        state.startCodexLogin()
+    }
+
+    // MARK: 2. ChatGPT 계정
+
+    private var chatgptPage: some View {
+        VStack(spacing: 32) {
+            heading("ChatGPT 계정으로 연결해요", "Plus, Pro 등 쓰고 있는 구독 그대로 써요. 아래 코드만 넣으면 돼요.")
+            VStack(spacing: 0) {
+                Text("기기 코드").font(Brand.suit(13)).foregroundStyle(Brand.gray)
+                if let code = state.deviceCode {
+                    Text(code.userCode).font(Brand.suit(54, .bold)).tracking(5).foregroundStyle(OB.brown)
+                        .textSelection(.enabled).padding(.top, 14)
                 } else {
-                    Text("SILLOG").font(Brand.suit(18, .semibold)).foregroundStyle(Brand.ink)
+                    ProgressView().controlSize(.regular).frame(height: 64).padding(.top, 14)
                 }
-            }
-            .padding(.top, 33)
-            Text("흩어진 기록을 모아,\n다음 일의 맥락으로.")
-                .font(Brand.suit(13)).foregroundStyle(Brand.gray).multilineTextAlignment(.center).lineSpacing(8)
-                .padding(.top, 34)
-        }
-        .padding(.vertical, 40)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-    }
-
-    private var loginColumn: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            Text("내 ChatGPT 계정으로 연결해요.").font(Brand.suit(17, .medium)).foregroundStyle(Brand.ink)
-            Text("별도의 Sillog 계정 없이 시작할 수 있어요.\n로그인 토큰은 이 기기에만 저장돼요.")
-                .font(Brand.suit(12)).foregroundStyle(Brand.gray).lineSpacing(8)
-                .fixedSize(horizontal: false, vertical: true)
-                .padding(.top, 13)
-            if loggedIn {
-                signedInBox.padding(.top, 21)
-            } else {
-                Button { loginAction() } label: {
-                    HStack(spacing: 8) {
-                        Text("ChatGPT로 로그인")
-                        Image(systemName: "arrow.up.right").font(.system(size: 10, weight: .medium))
+                Button { state.copyDeviceCode() } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: "square.on.square").font(.system(size: 12))
+                        Text("복사")
                     }
-                    .frame(maxWidth: .infinity)
+                    .font(Brand.suit(13, .medium)).foregroundStyle(Brand.ink)
+                    .padding(.horizontal, 14).frame(height: 30)
+                    .background(Capsule().fill(OB.chip))
+                    .contentShape(Capsule())
                 }
-                .buttonStyle(OnboardingPrimaryStyle(height: 42))
-                .keyboardShortcut(.defaultAction)
-                .padding(.top, 21)
-                if let code = state.deviceCode { deviceCodeBox(code).padding(.top, 15) }
+                .buttonStyle(.plain)
+                .disabled(state.deviceCode == nil)
+                .padding(.top, 16)
             }
-            apiKeyRow.padding(.top, 16)
-            if !loggedIn, let message = state.codexMessage { errorBox(message).padding(.top, 14) }
-            deviceHelp.padding(.top, 15)
+            .padding(.top, 22).padding(.bottom, 24).padding(.horizontal, 24)
+            .frame(width: 394)
+            .background(RoundedRectangle(cornerRadius: 22).fill(.white))
+            .shadow(color: OB.shadow, radius: 14, y: 5)
+            HStack(spacing: 14) {
+                stepChip(1, "ChatGPT 열기"); stepArrow
+                stepChip(2, "코드 넣기"); stepArrow
+                stepChip(3, "연결 확인")
+            }
+            if let line = notice ?? (connected ? nil : state.codexMessage) {
+                Text(line).font(Brand.suit(13)).foregroundStyle(OB.warn).multilineTextAlignment(.center)
+                    .textSelection(.enabled).frame(maxWidth: 560)
+            }
         }
-        .padding(.horizontal, 31).padding(.vertical, 30)
-        .frame(maxWidth: .infinity, alignment: .topLeading)
     }
 
-    /// 코드를 받기 전에는 로그인을 시작하고, 받은 뒤에는 승인 페이지를 다시 연다
-    private func loginAction() {
+    private func stepChip(_ n: Int, _ text: String) -> some View {
+        HStack(spacing: 8) {
+            numberDot(n, size: 22)
+            Text(text).font(Brand.suit(15, .medium)).foregroundStyle(Brand.ink)
+        }
+    }
+
+    private var stepArrow: some View {
+        Image(systemName: "arrow.right").font(.system(size: 11)).foregroundStyle(Color(hex: 0xC9BFB6))
+    }
+
+    /// ChatGPT 열기: 코드가 있으면 승인 페이지를 다시 열고, 없으면 로그인을 시작한다
+    private func openChatGPT() {
         if let code = state.deviceCode { NSWorkspace.shared.open(code.verificationURL) } else { state.startCodexLogin() }
     }
 
-    private func deviceCodeBox(_ code: DeviceCode) -> some View {
+    /// 연결 확인: 로그인돼 있으면 다음 단계, 아니면 상태를 다시 읽는다
+    private func confirmChatGPT() {
+        if case .loggedIn = state.codexStatus { useChatGPTProvider(); state.advanceOnboarding(); return }
+        state.refreshCodexStatus()
+        if state.deviceCode == nil { state.startCodexLogin() } else { notice = "아직 승인 전이에요. ChatGPT에서 코드를 넣어 주세요." }
+    }
+
+    /// API 키 연결을 쓰다 ChatGPT 로 바꾸는 경우 정리와 채팅 연결을 ChatGPT 로 되돌린다
+    private func useChatGPTProvider() {
+        guard state.settings.llmProvider != "codex" || state.settings.chatProvider != "codex" else { return }
+        state.settings.llmProvider = "codex"; state.settings.chatProvider = "codex"
+        state.applySettings()
+    }
+
+    // MARK: 3. 아주대 LLM API
+
+    private var ajouPage: some View {
+        VStack(spacing: 28) {
+            heading("아주대 LLM API로 연결해요", "학교 계정으로 키를 받아 붙여 넣으면 돼요.")
+            VStack(spacing: 0) {
+                listRow(1, "아주대 LLM 사이트에 학교 계정으로 로그인해요")
+                listRow(2, "개발자 메뉴의 API 키 탭에서 새 키를 만들어요")
+                listRow(3, "키는 한 번만 보여요. 바로 복사해요")
+                HStack(spacing: 14) {
+                    numberDot(4)
+                    keyField($ajouKey, placeholder: "복사한 API 키를 여기에 붙여 넣어요", fill: OB.field, height: 44, radius: 12)
+                }
+                .padding(.top, 16)
+            }
+            .padding(.horizontal, 32).padding(.vertical, 20)
+            .frame(maxWidth: 760)
+            .background(RoundedRectangle(cornerRadius: 26).fill(.white))
+            .shadow(color: OB.shadow, radius: 14, y: 5)
+            resultLine
+        }
+    }
+
+    private func listRow(_ n: Int, _ text: String) -> some View {
+        HStack(spacing: 14) {
+            numberDot(n)
+            Text(text).font(Brand.suit(15, .medium)).foregroundStyle(Color(hex: 0x3A2E27))
+            Spacer(minLength: 0)
+        }
+        .frame(height: 60)
+        .overlay(alignment: .bottom) { Rectangle().fill(OB.soft).frame(height: 1) }
+    }
+
+    private func keyField(_ text: Binding<String>, placeholder: String, fill: Color, height: CGFloat, radius: CGFloat) -> some View {
+        ZStack(alignment: .leading) {
+            if text.wrappedValue.isEmpty { Text(placeholder).font(Brand.suit(15)).foregroundStyle(Color(hex: 0xB3ABA4)).allowsHitTesting(false) }
+            SecureField("", text: text).textFieldStyle(.plain).font(Brand.suit(15)).foregroundStyle(Brand.text)
+        }
+        .padding(.horizontal, 16).frame(height: height)
+        .background(RoundedRectangle(cornerRadius: radius).fill(fill))
+    }
+
+    /// 연결 확인 결과 한 줄 (확인 중이면 진행 표시)
+    @ViewBuilder private var resultLine: some View {
+        if testing {
+            HStack(spacing: 8) { ProgressView().controlSize(.small); Text("연결을 확인하고 있어요").font(Brand.suit(13)).foregroundStyle(Brand.gray) }
+        } else if let notice {
+            Text(notice).font(Brand.suit(13)).foregroundStyle(OB.warn).multilineTextAlignment(.center)
+                .textSelection(.enabled).frame(maxWidth: 640)
+        }
+    }
+
+    // MARK: 4. API 키
+
+    private var apiKeyPage: some View {
+        VStack(spacing: 26) {
+            heading("API 키로 연결해요", "OpenAI 방식으로 쓰는 서버면 돼요.")
+            VStack(alignment: .leading, spacing: 18) {
+                labeled("서버 주소") { plainField($apiURL, "https://api.openai.com/v1") }
+                labeled("모델") { plainField($apiModel, "예: gpt-6.1-sol") }
+                labeled("API 키") { keyField($apiKey, placeholder: "여기에 붙여 넣기", fill: .white, height: 56, radius: 18).shadow(color: OB.shadow, radius: 8, y: 3) }
+            }
+            .frame(maxWidth: 936)
+            resultLine
+        }
+    }
+
+    private func labeled<Field: View>(_ label: String, @ViewBuilder _ field: () -> Field) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(label).font(Brand.suit(14, .medium)).foregroundStyle(Brand.gray)
+            field()
+        }
+    }
+
+    private func plainField(_ text: Binding<String>, _ placeholder: String) -> some View {
+        ZStack(alignment: .leading) {
+            if text.wrappedValue.isEmpty { Text(placeholder).font(Brand.suit(15)).foregroundStyle(Color(hex: 0xB3ABA4)).allowsHitTesting(false) }
+            TextField("", text: text).textFieldStyle(.plain).font(Brand.suit(15)).foregroundStyle(Brand.text)
+        }
+        .padding(.horizontal, 16).frame(height: 56)
+        .background(RoundedRectangle(cornerRadius: 18).fill(.white))
+        .shadow(color: OB.shadow, radius: 8, y: 3)
+    }
+
+    /// OpenAI 호환 서버 연결: 값을 넣어 연결 확인(시험 호출)을 하고, 되면 저장하고 권한 단계로. 안 되면 원래 설정으로 되돌린다
+    private func connect(baseURL: String, model: String, key: String) {
+        guard !testing else { return }
+        testing = true; notice = nil
+        let before = state.settings
+        var next = before
+        if baseURL == AppSettings.ajouBaseURL {
+            next.llmProvider = "ajou"; next.chatProvider = "ajou"; next.ajouModel = model; next.chatAjouModel = model; next.ajouAPIKey = key
+        } else {
+            next.llmProvider = "openai"; next.llmBaseURL = baseURL; next.llmModel = model; next.llmAPIKey = key
+            next.chatProvider = "openai"; next.chatBaseURL = baseURL; next.chatModel = model; next.chatAPIKey = key
+        }
+        state.settings = next
+        Task {
+            await state.testLLM()
+            testing = false
+            if state.llmTestResult?.hasPrefix("연결됨") == true {
+                state.finishAPIKeyConnection()
+                state.advanceOnboarding()
+            } else {
+                state.settings = before
+                notice = state.llmTestResult ?? "연결하지 못했어요."
+            }
+        }
+    }
+
+    private var apiKeyReady: Bool {
+        !apiURL.trimmingCharacters(in: .whitespaces).isEmpty && !apiModel.trimmingCharacters(in: .whitespaces).isEmpty
+    }
+
+    // MARK: 5. 권한 허용
+
+    private var permissionPage: some View {
+        let grants = state.permissionGrants
+        return VStack(spacing: 0) {
+            heading("한 번에 허용해요", "필요한 권한을 한 화면에서 모두 켜요.")
+            HStack(spacing: 16) {
+                bigPermission(title: "손쉬운 사용", reads: "창 제목, 주소, 문서 경로를 읽어요", warn: "켜지 않으면 앱 이름만 남아요",
+                              icon: "perm_acc", granted: grants.accessibility) { requestAccessibility() }
+                bigPermission(title: "화면 기록", reads: "화면에 있던 글자를 읽어요", warn: "켜지 않으면 화면 내용과 스크린샷을 남기지 못해요",
+                              icon: "perm_screen", granted: grants.screenRecording) { requestScreenRecording() }
+            }
+            .padding(.top, 26)
+            Text("쓰는 기능에 맞춰 켜요").font(Brand.suit(13, .medium)).foregroundStyle(Brand.gray)
+                .frame(maxWidth: .infinity, alignment: .leading).padding(.top, 18).padding(.bottom, 8)
+            HStack(spacing: 12) {
+                smallPermission(.notifications, icon: "perm_bell", title: "알림", detail: "정리가 끝나면\n알려요")
+                smallPermission(.microphone, icon: "perm_mic", title: "마이크", detail: "메뉴 막대에서\n녹음해요")
+                smallPermission(.speech, icon: "perm_speech", title: "음성 인식", detail: "녹음을 Mac 안에서\n글로 받아써요")
+                smallPermission(.downloads, icon: "perm_folder", title: "다운로드 폴더", detail: "새로 받은 파일을\n업무에 이어요")
+                smallPermission(.documents, icon: "perm_folder", title: "문서 폴더", detail: "받아쓴 녹음을\n저장해요")
+                smallPermission(.loginItem, icon: "perm_login", title: "로그인할 때 열기", detail: "켜 두면\n빠짐없이 기록해요")
+            }
+            Text("손쉬운 사용과 화면 기록은 시스템 설정에서 켜요. 화면 기록은 켠 뒤 앱을 다시 실행해야 해요.")
+                .font(Brand.suit(13)).foregroundStyle(Brand.gray).padding(.top, 26)
+        }
+        .frame(maxWidth: 1068)
+    }
+
+    private func bigPermission(title: String, reads: String, warn: String, icon: String, granted: Bool, request: @escaping () -> Void) -> some View {
+        HStack(spacing: 16) {
+            VStack(alignment: .leading, spacing: 0) {
+                Text(title).font(Brand.suit(26, .bold)).tracking(-0.5).foregroundStyle(Brand.ink)
+                Text(reads).font(Brand.suit(16)).foregroundStyle(Brand.gray).padding(.top, 8)
+                Text(warn).font(Brand.suit(14, .medium)).foregroundStyle(OB.warn).padding(.top, 4)
+                    .fixedSize(horizontal: false, vertical: true)
+                Group {
+                    if granted { grantedLabel(size: 15) } else { Button("허용하기", action: request).buttonStyle(OBPillStyle(height: 32, size: 14)) }
+                }
+                .padding(.top, 16)
+            }
+            Spacer(minLength: 8)
+            ArtImage(name: icon, size: 64)
+        }
+        .padding(.horizontal, 32).padding(.vertical, 28)
+        .frame(maxWidth: .infinity, minHeight: 183, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: 22).fill(.white))
+        .shadow(color: OB.shadow, radius: 12, y: 4)
+    }
+
+    private func grantedLabel(size: CGFloat) -> some View {
+        HStack(spacing: 5) {
+            Image(systemName: "checkmark").font(.system(size: size - 3, weight: .semibold))
+            Text("허용됨")
+        }
+        .font(Brand.suit(size, .medium)).foregroundStyle(OB.ok)
+        .frame(height: 32, alignment: .leading)
+    }
+
+    private func smallPermission(_ item: OnboardingPermissions.Item, icon: String, title: String, detail: String) -> some View {
         VStack(alignment: .leading, spacing: 0) {
-            Eyebrow("기기 코드").frame(height: 17, alignment: .leading)
-            HStack {
-                Text(code.userCode).font(Brand.jost(23)).tracking(2.99).foregroundStyle(Brand.ink).textSelection(.enabled)
-                Spacer()
-                Button { state.copyDeviceCode() } label: {
-                    Image(systemName: "doc.on.doc").font(.system(size: 13)).foregroundStyle(Brand.tabText)
-                        .frame(width: 28, height: 28).contentShape(Rectangle())
+            HStack(alignment: .center) {
+                ArtImage(name: icon, size: 30)
+                Spacer(minLength: 4)
+                if perms.granted.contains(item) {
+                    grantedLabel(size: 12).frame(height: 28)
+                } else {
+                    Button("허용하기") { Task { await perms.request(item) } }.buttonStyle(OBPillStyle(height: 28, size: 12))
+                }
+            }
+            Text(title).font(Brand.suit(15, .bold)).foregroundStyle(Brand.ink).lineLimit(1).minimumScaleFactor(0.8).padding(.top, 14)
+            Text(detail).font(Brand.suit(12)).foregroundStyle(Brand.gray).lineSpacing(2).padding(.top, 6)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(.horizontal, 16).padding(.vertical, 14)
+        .frame(maxWidth: .infinity, minHeight: 128, alignment: .topLeading)
+        .background(RoundedRectangle(cornerRadius: 18).fill(.white))
+        .shadow(color: OB.shadow, radius: 10, y: 3)
+    }
+
+    private func requestAccessibility() {
+        _ = Permissions.accessibility(prompt: true)
+        Permissions.openSettings(.accessibility)
+    }
+
+    private func requestScreenRecording() {
+        Permissions.requestScreenRecording()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { Permissions.openSettings(.screenRecording) }
+        state.askedScreenRecording = true
+    }
+
+    /// 모두 허용: 시스템 권한 창이 차례로 뜬다 (이미 허용한 것은 건너뛴다)
+    private func allowAll() {
+        if !state.permissionGrants.accessibility { _ = Permissions.accessibility(prompt: true) }
+        if !state.permissionGrants.screenRecording { Permissions.requestScreenRecording(); state.askedScreenRecording = true }
+        Task { await perms.requestAll() }
+    }
+
+    // MARK: 아래 막대 (76, 윗선)
+
+    private var bottomBar: some View {
+        HStack(spacing: 12) {
+            if let back = backLabel {
+                Button { goBack() } label: {
+                    HStack(spacing: 10) {
+                        BackMark()
+                        Text(back).font(Brand.suit(14, .medium)).foregroundStyle(Brand.ink)
+                    }
+                    .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .help("기기 코드 복사").accessibilityLabel("기기 코드 복사")
-            }
-            .frame(height: 38)
-            .padding(.top, 5)
-            Text("15분 안에 브라우저에서 승인해요.").font(Brand.suit(10)).foregroundStyle(Brand.gray).padding(.top, 5)
-        }
-        .padding(.horizontal, 17).padding(.top, 15).padding(.bottom, 18)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Brand.line))
-    }
-
-    /// 로그인을 마친 뒤: 로그인 버튼 자리에 연결한 계정 (Figma 에 없는 상태)
-    private var signedInBox: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            Eyebrow("로그인됨").frame(height: 17, alignment: .leading)
-            HStack(spacing: 8) {
-                Image(systemName: "checkmark").font(.system(size: 12, weight: .medium))
-                Text(signedInName).font(Brand.suit(15, .medium)).lineLimit(1)
-            }
-            .foregroundStyle(Brand.ink)
-            .padding(.top, 9)
-            Text("로그인을 마쳤어요. 아래 버튼으로 다음 단계로 넘어가요.").font(Brand.suit(10)).foregroundStyle(Brand.gray).padding(.top, 8)
-        }
-        .padding(17)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Brand.line))
-    }
-
-    private var signedInName: String {
-        if case .loggedIn(let email, _, _) = state.codexStatus, let email, !email.isEmpty { return email }
-        return "ChatGPT 계정"
-    }
-
-    /// API 키 로그인은 아직 없다: '예정' 표시만, 누를 수 없다
-    private var apiKeyRow: some View {
-        HStack(spacing: 7) {
-            Text("API 키로 시작").font(Brand.suit(11)).foregroundStyle(Brand.tabText)
-            Text("예정").font(Brand.suit(10, .medium)).foregroundStyle(Brand.gray)
-                .frame(width: 31, height: 20)
-                .background(RoundedRectangle(cornerRadius: 4).fill(Brand.paper))
-                .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(Brand.line))
-        }
-        .padding(.leading, 1)
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("API 키로 시작, 예정")
-    }
-
-    private func errorBox(_ message: String) -> some View {
-        HStack(alignment: .top, spacing: 10) {
-            Image(systemName: "exclamationmark.circle").font(.system(size: 13)).foregroundStyle(Brand.gray)
-            Text(message).font(Brand.suit(11)).foregroundStyle(Brand.text).textSelection(.enabled)
-                .fixedSize(horizontal: false, vertical: true)
-            Spacer(minLength: 0)
-        }
-        .padding(.horizontal, 14).padding(.vertical, 12)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(RoundedRectangle(cornerRadius: 6).fill(Brand.paper))
-        .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Brand.line))
-    }
-
-    private var deviceHelp: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Button { deviceHelpOpen.toggle() } label: {
-                HStack(spacing: 6) {
-                    Text(deviceHelpOpen ? "▾" : "▸").font(.system(size: 8))
-                    Text("기기 코드 로그인이 꺼져 있나요?").font(Brand.suit(10))
-                }
-                .foregroundStyle(Brand.gray)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            if deviceHelpOpen {
-                Text("ChatGPT 계정에서 기기 코드 로그인을 켠 뒤 다시 시도해 주세요.").font(Brand.suit(10)).foregroundStyle(Brand.gray)
-            }
-        }
-    }
-
-    private var privacyNote: some View {
-        HStack(alignment: .top, spacing: 6) {
-            Image(systemName: "checkmark.shield").font(.system(size: 15)).foregroundStyle(Brand.ink).frame(width: 15)
-            VStack(alignment: .leading, spacing: 8) {
-                Text(PrivacyNote.title).font(Brand.suit(12, .medium)).foregroundStyle(Brand.ink)
-                Text(PrivacyNote.body)
-                    .font(Brand.suit(11)).foregroundStyle(Brand.gray).lineSpacing(8)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            Spacer(minLength: 0)
-        }
-        .padding(.leading, 40).padding(.trailing, 31).padding(.top, 31).padding(.bottom, 24)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .overlay(alignment: .top) { Rectangle().fill(Brand.line).frame(height: 1) }
-    }
-
-    // MARK: 2. 권한
-
-    private var permissionBody: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            Text("기록할 범위를 직접 정할 수 있어요.\n권한은 언제든 macOS 설정에서 바꿀 수 있어요.")
-                .font(Brand.suit(13)).foregroundStyle(Brand.gray).lineSpacing(8)
-                .padding(.bottom, 16)
-            permissionRow("location", mirrored: true, "손쉬운 사용", detail: "앱 이름, 창 제목과 화면 텍스트를 읽어요.",
-                          granted: state.permissionGrants.accessibility) {
-                _ = Permissions.accessibility(prompt: true)
-                Permissions.openSettings(.accessibility)
-            }
-            permissionRow("display", "화면 기록", detail: "활성 창의 스크린샷과 화면 내용을 기록해요.",
-                          granted: state.permissionGrants.screenRecording) {
-                Permissions.requestScreenRecording()
-                DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { Permissions.openSettings(.screenRecording) }
-                state.askedScreenRecording = true
-            }
-            if state.askedScreenRecording { relaunchRow }       // OUT-05: 허용 여부와 상관없이 이번 실행에서 요청했으면
-        }
-        .padding(.horizontal, 30).padding(.top, 32).padding(.bottom, 43)
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
-
-    /// 아이콘은 Figma 처럼 외곽선: 손쉬운 사용은 왼쪽 위를 가리키는 화살표(location 을 좌우로 뒤집음), 화면 기록은 단색 모니터
-    private func permissionRow(_ icon: String, mirrored: Bool = false, _ title: String, detail: String, granted: Bool, action: @escaping () -> Void) -> some View {
-        HStack(spacing: 0) {
-            Image(systemName: icon).symbolRenderingMode(.monochrome).font(.system(size: 22, weight: .light)).foregroundStyle(Brand.tabText)
-                .scaleEffect(x: mirrored ? -1 : 1, y: 1)
-                .frame(width: 26, alignment: .leading)
-            VStack(alignment: .leading, spacing: 8) {
-                Text(title).font(Brand.suit(15, .medium)).foregroundStyle(Brand.ink)
-                Text(detail).font(Brand.suit(12)).foregroundStyle(Brand.gray)
-            }
-            .padding(.leading, 20)
-            Spacer()
-            if granted {
-                HStack(spacing: 6) {
-                    Image(systemName: "checkmark").font(.system(size: 10, weight: .medium))
-                    Text("허용됨")
-                }
-                .font(Brand.suit(11, .medium)).foregroundStyle(Brand.tabText)
-                .padding(.horizontal, 12).frame(height: 30)
-                .background(RoundedRectangle(cornerRadius: 6).fill(.white))
-                .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Brand.line))
-            } else {
-                Button("허용하기", action: action).buttonStyle(OnboardingSecondaryStyle())
-            }
-        }
-        .frame(height: 105)
-        .overlay(alignment: .bottom) { Rectangle().fill(Brand.line).frame(height: 1) }
-    }
-
-    private var relaunchRow: some View {
-        HStack {
-            Text("화면 기록 권한은 앱을 다시 실행해야 적용돼요.").font(Brand.suit(11)).foregroundStyle(Brand.gray)
-            Spacer()
-            Button { state.relaunch() } label: {
-                HStack(spacing: 6) {
-                    Image(systemName: "arrow.counterclockwise").font(.system(size: 11))
-                    Text("다시 실행")
-                }
-            }
-            .buttonStyle(OnboardingSecondaryStyle())
-        }
-        .frame(height: 68)
-    }
-
-    // MARK: 바닥 (73)
-
-    private var footer: some View {
-        HStack {
-            HStack(spacing: 0) {
-                stepLabel("01 로그인", on: step == .login)
-                Rectangle().fill(Brand.line).frame(width: 24, height: 1).padding(.leading, 15).padding(.trailing, 12)
-                stepLabel("02 권한", on: step == .permissions)
             }
             Spacer()
-            if step == .login {
-                let canGo = OnboardingFlow.canAdvance(from: .login, phase: state.phase)
-                Button { state.advanceOnboarding() } label: { arrowLabel("로그인 완료, 다음") }
-                    .buttonStyle(OnboardingPrimaryStyle(height: 38))
-                    .fixedSize()
-                    .opacity(canGo ? 1 : 0.38)
-                    .disabled(!canGo)
-                    .keyboardShortcut(canGo ? .defaultAction : nil)
-            } else {
-                // 권한이 없어도 시작할 수 있어야 해서 누르는 것은 늘 되고, 준비되지 않았으면 흐리게만 보인다
-                Button { state.completeOnboarding() } label: { arrowLabel("수집 시작") }
-                    .buttonStyle(OnboardingPrimaryStyle(height: 38))
-                    .fixedSize()
-                    .opacity(OnboardingFlow.startLooksReady(state.permissionGrants, askedScreenRecording: state.askedScreenRecording) ? 1 : 0.38)
-                    .keyboardShortcut(.defaultAction)
+            actions
+        }
+        .padding(.horizontal, 40)
+        .frame(height: 76)
+        .overlay(alignment: .top) { Rectangle().fill(OB.border).frame(height: 1).padding(.horizontal, 40) }
+    }
+
+    private var backLabel: String? {
+        if step == .permissions { return "이전" }
+        return method == .choose ? nil : "다른 방법 고르기"
+    }
+
+    private func goBack() {
+        notice = nil
+        if step == .permissions {
+            state.onboardingStep = .login        // 연결 방법을 다시 고르는 화면. 연결돼 있으면 거기서 다음으로 돌아온다
+            method = .choose
+        } else {
+            if method == .chatgpt { state.cancelCodexLogin() }
+            method = .choose
+        }
+    }
+
+    @ViewBuilder private var actions: some View {
+        if step == .permissions {
+            Button("모두 허용") { allowAll() }.buttonStyle(OBButtonStyle(kind: .secondary))
+            Button(state.askedScreenRecording ? "다시 실행하고 시작" : "시작") {
+                if state.askedScreenRecording { state.completeOnboardingAndRelaunch() } else { state.completeOnboarding() }
+            }
+            .buttonStyle(OBButtonStyle(kind: .primary)).keyboardShortcut(.defaultAction)
+        } else {
+            switch method {
+            case .choose:
+                if connected {
+                    Button("다음") { state.advanceOnboarding() }.buttonStyle(OBButtonStyle(kind: .primary)).keyboardShortcut(.defaultAction)
+                }
+            case .chatgpt:
+                Button { openChatGPT() } label: { linkLabel("ChatGPT 열기") }.buttonStyle(OBButtonStyle(kind: .secondary))
+                Button("연결 확인") { confirmChatGPT() }.buttonStyle(OBButtonStyle(kind: .primary)).keyboardShortcut(.defaultAction)
+            case .ajou:
+                Button { NSWorkspace.shared.open(AppSettings.ajouSite) } label: { linkLabel("아주대 LLM 열기") }.buttonStyle(OBButtonStyle(kind: .secondary))
+                Button("연결 확인") {
+                    connect(baseURL: AppSettings.ajouBaseURL, model: AppSettings.ajouDefaultModel, key: ajouKey.trimmingCharacters(in: .whitespacesAndNewlines))
+                }
+                .buttonStyle(OBButtonStyle(kind: .primary)).keyboardShortcut(.defaultAction)
+                .disabled(testing || ajouKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            case .apiKey:
+                Button("연결 확인") {
+                    connect(baseURL: apiURL.trimmingCharacters(in: .whitespaces), model: apiModel.trimmingCharacters(in: .whitespaces),
+                            key: apiKey.trimmingCharacters(in: .whitespacesAndNewlines))
+                }
+                .buttonStyle(OBButtonStyle(kind: .primary)).keyboardShortcut(.defaultAction)
+                .disabled(testing || !apiKeyReady)
             }
         }
-        .padding(.horizontal, 25)
-        .frame(height: 73)
-        .background(.white.opacity(0.95))
-        .overlay(alignment: .top) { Rectangle().fill(Brand.hairline).frame(height: 1) }
     }
 
-    private func stepLabel(_ text: String, on: Bool) -> some View {
-        Text(text).font(Brand.suit(10, on ? .semibold : .regular)).foregroundStyle(on ? Brand.ink : Brand.gray)
-    }
-
-    private func arrowLabel(_ text: String) -> some View {
+    private func linkLabel(_ text: String) -> some View {
         HStack(spacing: 8) {
             Text(text)
-            Image(systemName: "arrow.right").font(.system(size: 11, weight: .medium))
+            Image(systemName: "arrow.up.right.square").font(.system(size: 13))
         }
     }
 }
 
-/// 온보딩 카드 안 주색 버튼 (주색 바탕, 흰 글씨 12 Medium, 모서리 6)
-struct OnboardingPrimaryStyle: ButtonStyle {
-    var height: CGFloat
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .font(Brand.suit(12, .medium)).foregroundStyle(.white)
-            .padding(.horizontal, 20).frame(height: height)
-            .background(RoundedRectangle(cornerRadius: 6).fill(Brand.ink))
-            .opacity(configuration.isPressed ? 0.75 : 1)
-            .contentShape(Rectangle())
+// MARK: 부품
+
+/// 연결 방법 큰 타일: 흰 바탕, 부드러운 그림자, 커서를 대면 살짝 뜬다
+private struct MethodTile<Icon: View>: View {
+    let title: String
+    let detail: String
+    @ViewBuilder let icon: () -> Icon
+    let action: () -> Void
+    @State private var hover = false
+
+    var body: some View {
+        Button(action: action) {
+            VStack(spacing: 0) {
+                icon().frame(height: 76)
+                Text(title).font(Brand.suit(20, .bold)).foregroundStyle(Brand.ink).padding(.top, 22)
+                Text(detail).font(Brand.suit(14)).foregroundStyle(Brand.gray).padding(.top, 8)
+            }
+            .frame(maxWidth: .infinity, minHeight: 300)
+            .background(RoundedRectangle(cornerRadius: 26).fill(.white))
+            .shadow(color: OB.shadow.opacity(hover ? 1.6 : 1), radius: hover ? 18 : 12, y: hover ? 8 : 4)
+            .contentShape(RoundedRectangle(cornerRadius: 26))
+        }
+        .buttonStyle(.plain)
+        .onHover { h in withAnimation(.easeOut(duration: 0.12)) { hover = h } }
     }
 }
 
-/// 흰 바탕 테두리 버튼 (허용하기, 다시 실행)
-struct OnboardingSecondaryStyle: ButtonStyle {
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .font(Brand.suit(11, .medium)).foregroundStyle(Brand.tabText)
-            .padding(.horizontal, 12).frame(height: 30)
-            .background(RoundedRectangle(cornerRadius: 6).fill(.white))
-            .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Brand.line))
-            .opacity(configuration.isPressed ? 0.75 : 1)
-            .contentShape(Rectangle())
+/// 왼쪽을 가리키는 삼각형 세 개: 뒤로 갈수록(오른쪽으로) 옅어진다
+private struct BackMark: View {
+    var body: some View {
+        HStack(spacing: 1) {
+            ForEach([0x7A685B, 0xB5A89E, 0xDAD3CD], id: \.self) { hex in
+                LeftTriangle().fill(Color(hex: UInt32(hex))).frame(width: 9, height: 11)
+            }
+        }
     }
 }
 
-// MARK: 시작 상태 화면 (Figma OUT-W4, OUT-W3)
+private struct LeftTriangle: Shape {
+    func path(in rect: CGRect) -> Path {
+        var path = Path()
+        path.move(to: CGPoint(x: rect.maxX, y: rect.minY))
+        path.addLine(to: CGPoint(x: rect.minX, y: rect.midY))
+        path.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY))
+        path.closeSubpath()
+        return path
+    }
+}
 
-/// 불러오는 중: 흰 바탕 가운데 회전 표시
+/// 아래 막대 알약 버튼: 주색(#8A7566 바탕, 흰 글씨), 보조(흰 바탕, #DDD7D1 테두리)
+private struct OBButtonStyle: ButtonStyle {
+    enum Kind { case primary, secondary }
+    let kind: Kind
+    @Environment(\.isEnabled) private var enabled
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(Brand.suit(15, .medium))
+            .foregroundStyle(kind == .primary ? Color.white : Brand.ink)
+            .padding(.horizontal, 28).frame(height: 50)
+            .background(Capsule().fill(kind == .primary ? OB.accent : .white).overlay(Capsule().strokeBorder(kind == .primary ? Color.clear : OB.border)))
+            .opacity(enabled ? (configuration.isPressed ? 0.8 : 1) : 0.4)
+            .contentShape(Capsule())
+    }
+}
+
+/// 타일 안 작은 알약 버튼 (허용하기)
+private struct OBPillStyle: ButtonStyle {
+    let height: CGFloat
+    let size: CGFloat
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(Brand.suit(size, .medium)).foregroundStyle(Brand.ink)
+            .padding(.horizontal, size + 2).frame(height: height)
+            .background(Capsule().fill(.white).overlay(Capsule().strokeBorder(OB.border)))
+            .opacity(configuration.isPressed ? 0.7 : 1)
+            .contentShape(Capsule())
+    }
+}
+
+// MARK: 추가 권한 (알림, 마이크, 음성 인식, 폴더, 로그인 항목)
+
+/// 온보딩 권한 화면의 작은 타일 여섯 개의 상태와 요청. 상태는 묻지 않고 읽을 수 있는 것만 읽고(알림, 마이크, 음성 인식, 로그인 항목),
+/// 폴더는 읽기를 시도해야 알 수 있어(처음이면 시스템이 묻는다) 누른 뒤에만 허용됨으로 바뀐다
+@MainActor
+final class OnboardingPermissions: ObservableObject {
+    enum Item: String, CaseIterable { case notifications, microphone, speech, downloads, documents, loginItem }
+
+    @Published private(set) var granted: Set<Item> = []
+    /// WORKGRAPH_ONBOARDING_GRANTED=notifications,loginItem 처럼 정해 두면 시스템을 읽지 않고 그 상태로 고정한다 (스크린샷용)
+    private let fixed: Set<Item>?
+
+    init() {
+        let raw = ProcessInfo.processInfo.environment["WORKGRAPH_ONBOARDING_GRANTED"]
+        fixed = raw.map { Set($0.split(separator: ",").compactMap { Item(rawValue: String($0)) }) }
+        if let fixed { granted = fixed }
+    }
+
+    /// .app 번들로 실행했을 때만 알림, 마이크, 음성 인식 요청을 한다 (swift run 에서는 요청하면 시스템이 앱을 끝낸다)
+    private var bundled: Bool {
+        let bundle = Bundle.main
+        guard bundle.bundleURL.pathExtension == "app", bundle.bundleIdentifier != nil else { return false }
+        let info = bundle.infoDictionary ?? [:]
+        return info["NSMicrophoneUsageDescription"] != nil && info["NSSpeechRecognitionUsageDescription"] != nil
+    }
+
+    func refresh() async {
+        guard fixed == nil else { return }
+        var now = granted.intersection([.downloads, .documents])     // 폴더는 누른 결과를 그대로 둔다
+        if bundled {
+            let settings = await UNUserNotificationCenter.current().notificationSettings()
+            if settings.authorizationStatus == .authorized || settings.authorizationStatus == .provisional { now.insert(.notifications) }
+        }
+        if AVCaptureDevice.authorizationStatus(for: .audio) == .authorized { now.insert(.microphone) }
+        if SFSpeechRecognizer.authorizationStatus() == .authorized { now.insert(.speech) }
+        // 로그인 항목 상태 조회는 수 초 걸릴 수 있는 동기 XPC 호출이라 메인 스레드 밖에서 읽는다
+        if await Task.detached(priority: .utility, operation: { SMAppService.mainApp.status == .enabled }).value { now.insert(.loginItem) }
+        if now != granted { granted = now }
+    }
+
+    func request(_ item: Item, openSettingsOnFail: Bool = true) async {
+        guard fixed == nil else { return }
+        switch item {
+        case .notifications: await requestNotifications(openSettingsOnFail)
+        case .microphone: await requestMicrophone(openSettingsOnFail)
+        case .speech: await requestSpeech(openSettingsOnFail)
+        case .downloads: await requestFolder(.downloadsDirectory, item, openSettingsOnFail)
+        case .documents: await requestFolder(.documentDirectory, item, openSettingsOnFail)
+        case .loginItem: await requestLoginItem(openSettingsOnFail)
+        }
+        await refresh()
+    }
+
+    /// 모두 허용: 아직 안 된 것을 차례로 요청한다 (실패해도 시스템 설정을 연달아 열지 않는다)
+    func requestAll() async {
+        for item in Item.allCases where !granted.contains(item) { await request(item, openSettingsOnFail: false) }
+    }
+
+    private func requestNotifications(_ openSettings: Bool) async {
+        guard bundled else { return }
+        let center = UNUserNotificationCenter.current()
+        switch await center.notificationSettings().authorizationStatus {
+        case .authorized, .provisional, .ephemeral: break
+        case .notDetermined: _ = try? await center.requestAuthorization(options: [.alert, .sound])
+        default: if openSettings { SuggestionNotifier.openSystemSettings() }
+        }
+    }
+
+    private func requestMicrophone(_ openSettings: Bool) async {
+        guard bundled else { return }
+        switch AVCaptureDevice.authorizationStatus(for: .audio) {
+        case .authorized: break
+        case .notDetermined: _ = await AVCaptureDevice.requestAccess(for: .audio)
+        default: if openSettings { Permissions.openSettings(.microphone) }
+        }
+    }
+
+    private func requestSpeech(_ openSettings: Bool) async {
+        guard bundled else { return }
+        switch SFSpeechRecognizer.authorizationStatus() {
+        case .authorized: break
+        case .notDetermined:
+            // Speech 는 이 처리기를 배경 큐에서 부른다: 명시적으로 Sendable 로 표시한다 (RecordingPermissions 와 같은 방식)
+            _ = await withCheckedContinuation { continuation in
+                SFSpeechRecognizer.requestAuthorization { @Sendable status in continuation.resume(returning: status) }
+            }
+        default: if openSettings { Permissions.openSettings(.speechRecognition) }
+        }
+    }
+
+    /// 폴더는 읽어 봐야 안다: 처음이면 시스템이 묻고, 막혀 있으면 읽기가 실패한다
+    private func requestFolder(_ directory: FileManager.SearchPathDirectory, _ item: Item, _ openSettings: Bool) async {
+        let path = FileManager.default.urls(for: directory, in: .userDomainMask).first?.path ?? NSHomeDirectory()
+        let ok = await Task.detached(priority: .userInitiated) { (try? FileManager.default.contentsOfDirectory(atPath: path)) != nil }.value
+        if ok { granted.insert(item) } else if openSettings { Permissions.openSettings(.filesAndFolders) }
+    }
+
+    private func requestLoginItem(_ openSettings: Bool) async {
+        let status = await Task.detached(priority: .userInitiated) { () -> SMAppService.Status in
+            try? SMAppService.mainApp.register()
+            return SMAppService.mainApp.status
+        }.value
+        if status == .requiresApproval, openSettings { SMAppService.openSystemSettingsLoginItems() }
+    }
+}
+
+// MARK: 시작 상태 화면 (Figma 859:1862, OUT-W3)
+
+/// 불러오는 중: 연한 바탕 가운데 아이콘과 SILLOG 글자, 왼쪽 아래 진행 표시와 두 토막 얇은 선
 struct BrandLoadingView: View {
     var body: some View {
-        ProgressView().controlSize(.regular)
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(.white)
+        ZStack {
+            LinearGradient(colors: [Color(hex: 0xFAF9F7), Color(hex: 0xEBE8E3)], startPoint: .topLeading, endPoint: .bottomTrailing)
+            HStack(spacing: 2) {
+                ArtImage(name: "splash_icon", size: 66)
+                if let mark = OnboardingArt.image("splash_wordmark") {
+                    Image(nsImage: mark).resizable().interpolation(.high).scaledToFit().frame(height: 48).accessibilityLabel("SILLOG")
+                } else {
+                    Text("SILLOG").font(Brand.suit(34, .bold)).foregroundStyle(OB.brown)
+                }
+            }
+            VStack(alignment: .leading, spacing: 12) {
+                Spacer()
+                HStack(spacing: 8) {
+                    ProgressView().controlSize(.small).scaleEffect(0.7).frame(width: 14, height: 14)
+                    Text("실록 준비 중...").font(Brand.suit(13)).foregroundStyle(Brand.ink)
+                }
+                HStack(spacing: 6) {
+                    Capsule().fill(Color(hex: 0xDDD9D4)).frame(height: 3)
+                    Capsule().fill(Color(hex: 0xDDD9D4)).frame(height: 3)
+                }
+            }
+            .padding(.horizontal, 46).padding(.bottom, 46)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .ignoresSafeArea()
     }
 }
 
