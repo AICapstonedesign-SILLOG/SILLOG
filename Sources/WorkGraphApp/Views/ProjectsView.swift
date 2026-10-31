@@ -156,7 +156,7 @@ struct ProjectOverview<Composer: View>: View {
                         .opacity(hoveredConversation == conversation.id ? 1 : 0)
                         .accessibilityLabel("\(conversation.title) 채팅 메뉴")
                 }.padding(.horizontal, 16)
-                    .background(hoveredConversation == conversation.id ? Color(hex: 0xF6F5F4) : .clear, in: RoundedRectangle(cornerRadius: 8))
+                    .background(hoveredConversation == conversation.id ? Brand.paper : .clear, in: RoundedRectangle(cornerRadius: 8))
                     .onHover { hoveredConversation = $0 ? conversation.id : nil }
                     .contextMenu {
                         ProjectMoveMenu(projects: projects, itemID: "conversation:\(conversation.id)")
@@ -402,6 +402,6 @@ private struct ProjectProposalCard: View {
                     .disabled(!canAccept || title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }.font(Brand.suit(11, .medium)).padding(.top, 4)
         }.padding(16)
-            .background(RoundedRectangle(cornerRadius: 8).fill(Color(hex: 0xF6F5F4)))
+            .background(RoundedRectangle(cornerRadius: 8).fill(Brand.paper))
     }
 }

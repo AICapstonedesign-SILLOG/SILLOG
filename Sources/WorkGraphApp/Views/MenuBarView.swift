@@ -2,9 +2,8 @@ import AppKit
 import SwiftUI
 import WorkGraphCore
 
-/// 메뉴 막대 드롭다운. 상태(MenuBarModel.mode)에 따라 Figma 네 화면 중 하나를 그린다.
-///   OUT-W2 준비 전, OUT-W7 일시정지, OUT-W6 권한 경고: 버튼 메뉴 (폭 336, 흰 바탕)
-///   OUT-06 정상: 큰 숫자 메뉴 (폭 344, 흰색 94%)
+/// 메뉴 막대 드롭다운 (Figma 859:1630 기본, 857:1189 녹음 중, 857:1242 받아쓰는 중, 859:1760 일부만 수집, 859:1791 일시정지, 859:1741 연결 안 됨).
+/// 폭 560 의 두 칸: 왼쪽은 연결과 사용량, 오늘 숫자, 알림 줄. 오른쪽은 최근 업무와 녹음 줄. 아래에 [지금 정리] 와 작은 글씨 단추.
 /// `.window` 스타일 MenuBarExtra 안에서 그려진다.
 struct MenuBarView: View {
     @EnvironmentObject private var state: AppState
@@ -16,16 +15,16 @@ struct MenuBarView: View {
                           screenRecording: state.status.screenRecording)
     }
 
-    private var status: String? {
-        MenuBarModel.statusText(mode: mode, running: state.status.running, idle: state.status.idle)
-    }
-
     var body: some View {
-        if mode == .normal {
-            MenuBarDashboard(status: status, openMain: openMain)
-        } else {
-            MenuBarButtons(mode: mode, status: status, openMain: openMain)
+        Group {
+            if mode == .notReady {
+                MenuBarSignedOut(openMain: openMain)
+            } else {
+                MenuBarDashboard(mode: mode, openMain: openMain)
+            }
         }
+        .frame(width: 560)
+        .background(MenuColor.card)
     }
 
     private func openMain() {
@@ -34,319 +33,367 @@ struct MenuBarView: View {
     }
 }
 
-/// 머리: 왼쪽 SILLOG 로고, 오른쪽 상태 글씨, 아래 구분선
+/// 메뉴 전용 색 (Figma 메뉴 화면 값). 큰 면에는 거의 검정을 쓰지 않는다
+private enum MenuColor {
+    static let card = Color(hex: 0xFCFAF8)
+    static let text = Color(hex: 0x2A201B)
+    static let sub = Color(hex: 0x4A3E37)
+    static let gray = Color(hex: 0x8C837C)
+    static let primary = Color(hex: 0x8A7566)
+    static let track = Color(hex: 0xECE7E2)
+    static let line = Color(hex: 0xEAE5E0)
+    static let row = Color(hex: 0xF4EFEB)
+    static let chip = Color(hex: 0xEFE9E4)
+    static let warnBg = Color(hex: 0xF6E9E4)
+    static let warnText = Color(hex: 0xA0523A)
+    static let green = Color(hex: 0x3F9B6E)
+    static let amber = Color(hex: 0xE0A030)
+    static let rec = Color(hex: 0xC0573F)
+    static let idle = Color(hex: 0xA9A29B)
+}
+
+/// 머리: 왼쪽 앱 아이콘과 SILLOG 글자, 오른쪽 점과 상태 글씨
 private struct MenuBarHeader: View {
-    let height: CGFloat
-    let logoHeight: CGFloat
-    let status: String?
-    let statusFont: Font
-    let line: Color
-    /// OUT-06 은 "■" 를 진한 네모로 따로 그린다 (W6 은 글씨 색 그대로)
-    var squareColor: Color? = nil
+    let status: String
+    let dot: Color
 
     var body: some View {
-        HStack {
+        HStack(spacing: 8) {
+            if let icon = Brand.iconMatte {
+                Image(nsImage: icon).resizable().scaledToFit().frame(width: 24, height: 24).accessibilityHidden(true)
+            }
             if let mark = Brand.wordmark {
-                Image(nsImage: mark).resizable().scaledToFit().frame(height: logoHeight).accessibilityLabel("SILLOG")
+                Image(nsImage: mark).resizable().scaledToFit().frame(height: 14).accessibilityLabel("SILLOG")
             } else {
-                Text("SILLOG").font(Brand.suit(18, .semibold)).foregroundStyle(Brand.ink)
+                Text("SILLOG").font(Brand.suit(15, .semibold)).foregroundStyle(MenuColor.text)
             }
             Spacer()
-            if let status, let squareColor, status.hasPrefix("■ ") {
-                HStack(spacing: 7) {
-                    Rectangle().fill(squareColor).frame(width: 6, height: 6)
-                    Text(status.dropFirst(2)).font(statusFont).foregroundStyle(Brand.gray)
-                }
-            } else if let status {
-                Text(status).font(statusFont).foregroundStyle(Brand.gray)
+            HStack(spacing: 6) {
+                Circle().fill(dot).frame(width: 6, height: 6)
+                Text(status).font(Brand.suit(11)).foregroundStyle(MenuColor.sub)
             }
         }
-        .frame(height: height)
-        .overlay(alignment: .bottom) { Rectangle().fill(line).frame(height: 1) }
+        .padding(.horizontal, 18)
+        .frame(height: 48)
     }
 }
 
-// MARK: OUT-W2 · OUT-W6 · OUT-W7
+/// 얇은 가로선
+private struct MenuLine: View {
+    var body: some View { Rectangle().fill(MenuColor.line).frame(height: 1) }
+}
 
-/// 요약 한두 줄과 큰 버튼 (흰 바탕, 폭 336, 안쪽 여백 24)
-private struct MenuBarButtons: View {
+/// 아래 줄의 작은 글씨 단추 (아이콘 + 글씨)
+private struct MenuTextButton: View {
+    let icon: String
+    let title: String
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 6) {
+                Image(systemName: icon).font(.system(size: 11))
+                Text(title).font(Brand.suit(11.5))
+            }
+            .foregroundStyle(MenuColor.gray)
+            .padding(.horizontal, 10).frame(height: 32)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+/// 채운 주색 단추 (흰 굵은 글씨, 모서리 10)
+private struct MenuFilledButton: View {
+    let title: String
+    var icon: String? = nil
+    var height: CGFloat = 38
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 8) {
+                if let icon { Image(systemName: icon).font(.system(size: 12, weight: .semibold)) }
+                Text(title).font(Brand.suit(13, .bold))
+            }
+            .foregroundStyle(.white)
+            .frame(maxWidth: .infinity).frame(height: height)
+            .background(RoundedRectangle(cornerRadius: 10).fill(MenuColor.primary))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+// MARK: 연결 안 됨 (859:1741), 시작 전
+
+/// 로그인 전, 권한 단계 전, 시작 실패: 안내 상자 하나와 [AI 연결하기], 아래에는 종료만
+private struct MenuBarSignedOut: View {
     @EnvironmentObject private var state: AppState
-    let mode: MenuBarMode
-    let status: String?
     let openMain: () -> Void
 
-    var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            MenuBarHeader(height: 64, logoHeight: 22, status: status, statusFont: Brand.suit(11), line: Brand.line)
-            if mode == .notReady {
-                notice(icon: "info.circle", MenuBarModel.notReadyMessage(phase: state.phase, startupFailed: state.startupError != nil))
-                    .padding(.top, 18).padding(.bottom, 22)
-                divider
-                MenuPrimaryButton(title: "시작하기…", action: openMain)
-                    .padding(.top, 18).padding(.bottom, 16)
-                // 녹음은 수집 준비와 상관없이 따로 돈다: 켜져 있을 때만 끝내기 줄을 보인다 (시작 버튼은 없다)
-                if state.activeRecording != nil {
-                    divider
-                    MenuBarRecordingSection(allowStart: false)
-                }
-            } else {
-                summary
-                divider
-                VStack(spacing: 10) {
-                    MenuPrimaryButton(title: "그래프 열기") {
-                        state.selectedTab = .graph
-                        openMain()
-                    }
-                    HStack(spacing: 8) {
-                        MenuSecondaryButton(title: state.batchRunning ? "정리하는 중…" : "지금 정리") {
-                            Task { await state.runBatch(force: true) }
-                        }
-                        .disabled(state.batchRunning)
-                        MenuSecondaryButton(title: state.status.paused ? "수집 다시 시작" : "수집 일시정지") { state.togglePause() }
-                    }
-                }
-                .padding(.vertical, 16)
-                // 일시정지·권한 경고에서도 녹음은 그대로 켜고 끝낼 수 있다
-                divider
-                MenuBarRecordingSection(allowStart: true)
-            }
-            divider
-            Button { NSApp.terminate(nil) } label: {
-                HStack(spacing: 8) {
-                    Image(systemName: "rectangle.portrait.and.arrow.right").font(.system(size: 13))
-                    Text("Sillog 종료").font(Brand.suit(13))
-                }
-                .foregroundStyle(Brand.ink)
-                .frame(maxWidth: .infinity).frame(height: 16)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .padding(.top, 16).padding(.bottom, 20)
-        }
-        .padding(.horizontal, 24)
-        .frame(width: 336)
-        .background(.white)
-    }
-
-    /// W6·W7: 오늘 숫자, 마지막 정리, (W6) 권한 경고
-    private var summary: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            Text("오늘 기록 \(state.todayCount)개, 정리 대기 \(state.pendingCount)개")
-                .font(Brand.suit(13, .medium)).foregroundStyle(Brand.ink)
-            Text(state.lastBatchText).font(Brand.suit(12)).foregroundStyle(Brand.gray).lineLimit(2)
-                .padding(.top, 8)
-            if mode == .permissionMissing {
-                notice(icon: "exclamationmark.circle", "권한이 빠져 있어 일부만 수집 중이에요").padding(.top, 20)
-            }
-        }
-        .padding(.top, 18).padding(.bottom, 17)
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
-
-    private func notice(icon: String, _ text: String) -> some View {
-        HStack(spacing: 12) {
-            Image(systemName: icon).font(.system(size: 14)).foregroundStyle(Brand.ink)
-            Text(text).font(Brand.suit(13)).foregroundStyle(Brand.ink)
-        }
-    }
-
-    private var divider: some View { Rectangle().fill(Brand.line).frame(height: 1) }
-}
-
-/// 주색 큰 버튼 (288×42, 모서리 8, SUIT 500 14)
-private struct MenuPrimaryButton: View {
-    let title: String
-    let action: () -> Void
+    private var needsLogin: Bool { state.phase == .login && state.startupError == nil }
 
     var body: some View {
-        Button(action: action) {
-            Text(title).font(Brand.suit(14, .medium)).foregroundStyle(.white)
-                .frame(maxWidth: .infinity).frame(height: 42)
-                .background(RoundedRectangle(cornerRadius: 8).fill(Brand.ink))
-                .contentShape(Rectangle())
+        VStack(spacing: 0) {
+            MenuBarHeader(status: needsLogin ? "연결 안 됨" : "준비 전", dot: MenuColor.idle)
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(spacing: 10) {
+                    Image(systemName: needsLogin ? "link" : "info.circle").font(.system(size: 13)).foregroundStyle(MenuColor.sub)
+                    Text(needsLogin ? "기록을 정리하려면 AI를 연결해요"
+                         : MenuBarModel.notReadyMessage(phase: state.phase, startupFailed: state.startupError != nil))
+                        .font(Brand.suit(12.5, .medium)).foregroundStyle(MenuColor.text)
+                }
+                MenuFilledButton(title: needsLogin ? "AI 연결하기" : "시작하기", height: 34, action: openMain)
+            }
+            .padding(14)
+            .background(RoundedRectangle(cornerRadius: 12).fill(MenuColor.row))
+            .padding(.horizontal, 18).padding(.bottom, 14)
+            // 녹음은 로그인과 상관없이 따로 돈다: 켜져 있을 때만 끝내기 줄을 보인다 (시작 버튼은 없다)
+            if state.activeRecording != nil {
+                MenuBarRecordingRow(allowStart: false).padding(.horizontal, 18).padding(.bottom, 14)
+            }
+            MenuLine()
+            HStack {
+                Spacer()
+                MenuTextButton(icon: "rectangle.portrait.and.arrow.right", title: "종료") { NSApp.terminate(nil) }
+            }
+            .padding(.horizontal, 8).frame(height: 44)
         }
-        .buttonStyle(.plain)
     }
 }
 
-/// 흰 바탕 테두리 버튼 (140×42, 모서리 8, SUIT 500 13)
-private struct MenuSecondaryButton: View {
-    let title: String
-    let action: () -> Void
+// MARK: 기본, 녹음 중, 받아쓰는 중, 일부만 수집, 일시정지
 
-    var body: some View {
-        Button(action: action) {
-            Text(title).font(Brand.suit(13, .medium)).foregroundStyle(Brand.ink)
-                .frame(maxWidth: .infinity).frame(height: 42)
-                .background(RoundedRectangle(cornerRadius: 8).fill(.white))
-                .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Brand.line))
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-    }
-}
-
-// MARK: OUT-06
-
-/// 큰 숫자 두 개, 알림·파일 제안 줄, 최근 업무 3개, 녹음 줄, [지금 정리], 일시정지·앱 열기·종료 (흰색 94%, 폭 344, 안쪽 여백 23)
 private struct MenuBarDashboard: View {
     @EnvironmentObject private var state: AppState
-    let status: String?
+    let mode: MenuBarMode
     let openMain: () -> Void
 
+    /// 오른쪽 위 상태: 녹음 중이 가장 먼저, 그다음 일시정지, 권한 부족, 자리 비움, 기록 중
+    private var statusInfo: (text: String, dot: Color) {
+        if state.activeRecording != nil { return ("녹음 중", MenuColor.rec) }
+        switch mode {
+        case .paused: return ("일시정지됨", MenuColor.idle)
+        case .permissionMissing: return ("일부만 수집", MenuColor.amber)
+        default:
+            if state.status.idle { return ("자리 비움", MenuColor.idle) }
+            return state.status.running ? ("기록 중", MenuColor.green) : ("시작하는 중", MenuColor.idle)
+        }
+    }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            MenuBarHeader(height: 60, logoHeight: 21, status: status, statusFont: Brand.suit(10), line: Brand.hairline, squareColor: Brand.ink)
-            stats
-            if state.notificationsDenied { notificationRow }
-            if state.pendingFileSuggestions > 0 { fileRow }
-            if !state.taskList.isEmpty { recentWork }
-            recordingSection
+        VStack(spacing: 0) {
+            MenuBarHeader(status: statusInfo.text, dot: statusInfo.dot)
+            HStack(alignment: .top, spacing: 0) {
+                leftColumn.frame(width: 280, alignment: .topLeading)
+                Rectangle().fill(MenuColor.line).frame(width: 1).frame(maxHeight: .infinity).padding(.top, 2)
+                rightColumn.frame(maxWidth: .infinity, alignment: .topLeading)
+            }
+            .frame(minHeight: 232, alignment: .top)
+            MenuLine()
             bottom
         }
-        .padding(.horizontal, 23)
-        .frame(width: 344)
-        .background(.white.opacity(0.94))
     }
 
-    /// 오늘·대기: 눈썹 글씨 17, 숫자 76 (Jost 200 54), 설명 15. 사이에 세로선
-    private var stats: some View {
-        HStack(alignment: .top, spacing: 0) {
-            number("오늘", state.todayCount, "오늘 기록").frame(width: 149, alignment: .leading)
-            Rectangle().fill(Brand.hairline).frame(width: 1, height: 107)
-            number("대기", state.pendingCount, "정리 대기").padding(.leading, 23)
-            Spacer(minLength: 0)
-        }
-        .padding(.top, 21)
-        .frame(height: 153, alignment: .top)
-        .overlay(alignment: .bottom) { hairline }
-    }
+    // MARK: 왼쪽: 연결, 사용량, 오늘 숫자, 알림 줄
 
-    private func number(_ eyebrow: String, _ value: Int, _ caption: String) -> some View {
+    private var leftColumn: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Eyebrow(eyebrow).frame(height: 17, alignment: .leading)
-            Text(MenuBarModel.twoDigits(value))
-                .font(Brand.jostLight(54)).foregroundStyle(Brand.ink)
+            connectionPill
+            if let usage = state.codexUsage, !state.settings.llmUsesAPI {
+                usageBars(usage).padding(.top, 12)
+            }
+            Spacer(minLength: 14)
+            HStack(alignment: .top, spacing: 0) {
+                number("오늘 기록", state.todayCount).frame(width: 124, alignment: .leading)
+                number("정리 대기", state.pendingCount)
+                Spacer(minLength: 0)
+            }
+            VStack(spacing: 6) {
+                if mode == .permissionMissing { permissionRow }
+                if state.notificationsDenied { notificationRow }
+                if state.pendingFileSuggestions > 0 { fileRow }
+            }
+            .padding(.top, 14)
+        }
+        .padding(.horizontal, 16).padding(.top, 2).padding(.bottom, 16)
+        .frame(maxHeight: .infinity, alignment: .top)
+    }
+
+    /// 연결 방식: 제공자 로고, 요금제 이름, 초록 점
+    private var connectionPill: some View {
+        let usesAPI = state.settings.llmUsesAPI
+        var label = "ChatGPT"
+        var connected = usesAPI
+        if usesAPI { label = AppSettings.providerName(state.settings.llmProvider) }
+        else if case .loggedIn(_, let plan, _) = state.codexStatus {
+            connected = true
+            if let plan, !plan.isEmpty { label = "ChatGPT \(plan.prefix(1).uppercased() + plan.dropFirst())" }
+        }
+        return HStack(spacing: 7) {
+            if let mark = Brand.openAIMark {
+                Image(nsImage: mark).renderingMode(.template).resizable().scaledToFit().frame(width: 13, height: 13)
+                    .foregroundStyle(MenuColor.sub)
+            }
+            Text(label).font(Brand.suit(11.5, .medium)).foregroundStyle(MenuColor.sub)
+            Circle().fill(connected ? MenuColor.green : MenuColor.idle).frame(width: 6, height: 6)
+        }
+        .padding(.horizontal, 10).frame(height: 24)
+        .background(Capsule().fill(MenuColor.chip))
+    }
+
+    /// 짧은 창(5시간)과 긴 창(주간) 사용량 막대
+    private func usageBars(_ usage: CodexUsage) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            ForEach([usage.primary, usage.secondary].compactMap { $0 }, id: \.windowSeconds) { window in
+                usageBar(window)
+            }
+        }
+    }
+
+    private func usageBar(_ window: CodexUsage.Window) -> some View {
+        let ratio = min(1, max(0, window.usedPercent / 100))
+        let name = window.windowSeconds >= 48 * 3600 ? "주간" : window.label
+        return VStack(alignment: .leading, spacing: 5) {
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Text("\(name) 사용량").font(Brand.suit(11.5, .medium)).foregroundStyle(MenuColor.text)
+                if let hint = Self.resetHint(window, now: Date()) {
+                    Text(hint).font(Brand.suit(10)).foregroundStyle(MenuColor.gray).lineLimit(1)
+                }
+                Spacer(minLength: 4)
+                Text("\(Int(window.usedPercent.rounded()))%").font(Brand.suit(11.5, .medium)).foregroundStyle(MenuColor.text)
+            }
+            Capsule().fill(MenuColor.track).frame(height: 6)
+                .overlay(alignment: .leading) {
+                    GeometryReader { g in Capsule().fill(MenuColor.primary).frame(width: max(6, g.size.width * ratio)) }
+                }
+        }
+    }
+
+    /// "2시간 14분 뒤 초기화", 하루 넘게 남았으면 "목요일 초기화"
+    static func resetHint(_ window: CodexUsage.Window, now: Date) -> String? {
+        guard window.resetAt > 0 else { return nil }
+        let reset = Date(timeIntervalSince1970: window.resetAt)
+        let seconds = reset.timeIntervalSince(now)
+        guard seconds > 0 else { return "곧 초기화" }
+        if seconds < 24 * 3600 {
+            let minutes = Int((seconds / 60).rounded(.up))
+            if minutes < 60 { return "\(minutes)분 뒤 초기화" }
+            return minutes % 60 == 0 ? "\(minutes / 60)시간 뒤 초기화" : "\(minutes / 60)시간 \(minutes % 60)분 뒤 초기화"
+        }
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "ko_KR")
+        formatter.dateFormat = "EEEE"
+        return "\(formatter.string(from: reset)) 초기화"
+    }
+
+    private func number(_ caption: String, _ value: Int) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(caption).font(Brand.suit(10.5)).foregroundStyle(MenuColor.gray)
+            Text("\(max(0, value))").font(Brand.suit(30, .medium)).foregroundStyle(MenuColor.text)
                 .lineLimit(1).minimumScaleFactor(0.5)
-                .frame(height: 76, alignment: .leading)
-            Text(caption).font(Brand.suit(10)).foregroundStyle(Brand.gray).frame(height: 15, alignment: .leading)
+        }
+    }
+
+    /// 손쉬운 사용이나 화면 기록이 꺼져 있으면: 누르면 설정의 일반(권한 칸)
+    private var permissionRow: some View {
+        alertRow(icon: "exclamationmark.circle", text: "권한이 빠져 있어 일부만 기록해요", warm: true) {
+            state.openGeneralSettings()
+            openMain()
         }
     }
 
     /// 알림 권한이 꺼져 있으면: 누르면 설정의 일반(권한 칸)
     private var notificationRow: some View {
-        Button {
+        alertRow(icon: "bell.slash", text: "알림 꺼짐", warm: false) {
             state.openGeneralSettings()
             openMain()
-        } label: {
-            HStack(spacing: 8) {
-                Text("알림 꺼짐").font(Brand.suit(10)).foregroundStyle(Brand.tabText)
-                Spacer()
-                Image(systemName: "arrow.up.right").font(.system(size: 10)).foregroundStyle(Brand.tabText)
-            }
-            .frame(height: 36)
-            .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
-        .overlay(alignment: .bottom) { hairline }
     }
 
     /// 파일 정리 제안이 있으면: 누르면 기록 자료의 파일 구역
     private var fileRow: some View {
-        Button {
+        alertRow(icon: "doc", text: "파일 정리 제안", warm: false, count: state.pendingFileSuggestions) {
             state.openFileSuggestions()
             openMain()
-        } label: {
-            HStack(spacing: 0) {
-                Text("파일 정리 제안").font(Brand.suit(11)).foregroundStyle(Brand.text)
-                Spacer()
-                Text("\(state.pendingFileSuggestions)").font(Brand.jost(15)).foregroundStyle(Brand.text)
-                Image(systemName: "arrow.up.right").font(.system(size: 10)).foregroundStyle(Brand.tabText).padding(.leading, 18)
-            }
-            .padding(.trailing, 25)
-            .frame(height: 55)
-            .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
-        .overlay(alignment: .bottom) { hairline }
     }
 
-    /// 최근 업무 3개. 누르면 다시 열기 (prepareResume 이 창을 연다)
-    private var recentWork: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            Eyebrow("최근 업무").frame(height: 17, alignment: .leading)
-            Text("최근 업무 다시 열기").font(Brand.suit(10)).foregroundStyle(Brand.gray).padding(.top, 5)
-            VStack(alignment: .leading, spacing: 20) {
-                ForEach(state.taskList.prefix(3)) { task in
-                    Button { state.prepareResume(taskId: task.id) } label: {
-                        HStack {
-                            VStack(alignment: .leading, spacing: 0) {
-                                Text(task.title).font(Brand.suit(12)).foregroundStyle(Brand.text).lineLimit(1)
-                                    .frame(height: 18, alignment: .leading)
-                                Text(Self.timeText(task.lastActive)).font(Brand.suit(9)).foregroundStyle(Brand.gray)
-                                    .frame(height: 14, alignment: .leading)
-                                    .padding(.top, 23)
-                            }
-                            Spacer(minLength: 12)
-                            Image(systemName: "arrow.counterclockwise").font(.system(size: 12)).foregroundStyle(Brand.ink)
-                        }
-                        .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                }
-            }
-            .padding(.top, 20)
-        }
-        .padding(.top, 20).padding(.bottom, 19)
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
-
-    /// 녹음: 문제 안내 → 정리 단계 → 녹음 줄 ([● 녹음 시작] 또는 "● 녹음 중 12:31" [■ 끝내기]). 최근 업무가 있으면 위에 선
-    private var recordingSection: some View {
-        MenuBarRecordingSection(allowStart: true)
-            .overlay(alignment: .top) { if !state.taskList.isEmpty { hairline } }
-    }
-
-    /// [지금 정리] 와 일시정지·앱 열기·종료. 위의 녹음 줄이 아래 선을 긋는다
-    private var bottom: some View {
-        VStack(spacing: 0) {
-            Button { Task { await state.runBatch(force: true) } } label: {
-                HStack(spacing: 8) {
-                    Image(systemName: "arrow.counterclockwise").font(.system(size: 12, weight: .medium))
-                    Text(state.batchRunning ? "정리하는 중…" : "지금 정리").font(Brand.suit(12, .medium))
-                }
-                .foregroundStyle(.white)
-                .frame(maxWidth: .infinity).frame(height: 38)
-                .background(RoundedRectangle(cornerRadius: 6).fill(Brand.ink))
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .disabled(state.batchRunning)
-            HStack(spacing: 0) {
-                footerButton("pause", "일시정지") { state.togglePause() }
-                footerButton("macwindow", "앱 열기") { openMain() }
-                footerButton("rectangle.portrait.and.arrow.right", "종료") { NSApp.terminate(nil) }
-            }
-            .frame(height: 35)
-            .padding(.top, 11)
-        }
-        .padding(.top, 16).padding(.bottom, 12)
-    }
-
-    private func footerButton(_ icon: String, _ title: String, action: @escaping () -> Void) -> some View {
+    private func alertRow(icon: String, text: String, warm: Bool, count: Int? = nil, action: @escaping () -> Void) -> some View {
         Button(action: action) {
-            HStack(spacing: 8) {
-                Image(systemName: icon).font(.system(size: 12))
-                Text(title).font(Brand.suit(10))
+            HStack(spacing: 9) {
+                Image(systemName: icon).font(.system(size: 12)).foregroundStyle(warm ? MenuColor.warnText : MenuColor.sub)
+                Text(text).font(Brand.suit(11.5, warm ? .medium : .regular)).foregroundStyle(warm ? MenuColor.warnText : MenuColor.sub)
+                    .lineLimit(1)
+                Spacer(minLength: 4)
+                if let count { Text("\(count)").font(Brand.suit(11.5, .semibold)).foregroundStyle(MenuColor.text) }
+                Image(systemName: "chevron.right").font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(warm ? MenuColor.warnText : MenuColor.gray)
             }
-            .foregroundStyle(Brand.tabText)
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .padding(.horizontal, 12).frame(height: 30)
+            .background(RoundedRectangle(cornerRadius: 8).fill(warm ? MenuColor.warnBg : MenuColor.row))
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
     }
 
-    private var hairline: some View { Rectangle().fill(Brand.hairline).frame(height: 1) }
+    // MARK: 오른쪽: 최근 업무, 녹음 줄
+
+    private var rightColumn: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text("최근 업무").font(Brand.suit(10.5)).foregroundStyle(MenuColor.gray).padding(.top, 2)
+            if state.taskList.isEmpty {
+                Text("아직 정리된 업무가 없어요").font(Brand.suit(12)).foregroundStyle(MenuColor.gray).padding(.top, 14)
+            } else {
+                VStack(alignment: .leading, spacing: 10) {
+                    ForEach(state.taskList.prefix(3)) { task in recentTask(task) }
+                }
+                .padding(.top, 10)
+            }
+            Spacer(minLength: 10)
+            MenuBarRecordingRow(allowStart: true)
+        }
+        .padding(.horizontal, 16).padding(.top, 2).padding(.bottom, 16)
+        .frame(maxHeight: .infinity, alignment: .top)
+    }
+
+    /// 최근 업무 한 줄. 누르면 다시 열기 (prepareResume 이 창을 연다)
+    private func recentTask(_ task: TaskSummary) -> some View {
+        Button { state.prepareResume(taskId: task.id) } label: {
+            HStack(spacing: 10) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(task.title).font(Brand.suit(13, .medium)).foregroundStyle(MenuColor.text).lineLimit(1).truncationMode(.tail)
+                    Text(Self.timeText(task.lastActive)).font(Brand.suit(10.5)).foregroundStyle(MenuColor.gray)
+                }
+                Spacer(minLength: 8)
+                Image(systemName: "arrow.clockwise").font(.system(size: 12)).foregroundStyle(MenuColor.gray)
+            }
+            .frame(height: 34)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("\(task.title) 다시 열기")
+    }
+
+    // MARK: 아래 줄
+
+    /// [지금 정리] 와 일시정지(또는 다시 시작), 앱 열기, 종료
+    private var bottom: some View {
+        HStack(spacing: 0) {
+            MenuFilledButton(title: state.batchRunning ? "정리하는 중…" : "지금 정리", icon: "arrow.clockwise", height: 38) {
+                Task { await state.runBatch(force: true) }
+            }
+            .frame(width: 190)
+            .disabled(state.batchRunning)
+            .opacity(state.batchRunning ? 0.6 : 1)
+            Spacer(minLength: 12)
+            MenuTextButton(icon: state.status.paused ? "play" : "pause", title: state.status.paused ? "다시 시작" : "일시정지") { state.togglePause() }
+            MenuTextButton(icon: "macwindow", title: "앱 열기") { openMain() }
+            MenuTextButton(icon: "rectangle.portrait.and.arrow.right", title: "종료") { NSApp.terminate(nil) }
+        }
+        .padding(.horizontal, 16).frame(height: 62)
+    }
 
     static func timeText(_ ts: Double) -> String {
         let date = Date(timeIntervalSince1970: ts)
@@ -357,89 +404,121 @@ private struct MenuBarDashboard: View {
     }
 }
 
-// MARK: 녹음 줄 (OUT-06, OUT-W7, OUT-W6, OUT-W2 공용)
+// MARK: 녹음 줄 (정상, 일시정지, 일부만 수집, 준비 전 공용)
 
-/// 녹음 줄: 문제 안내 → 정리 단계 → [● 녹음 시작] 또는 "● 녹음 중 12:31" [■ 끝내기].
-/// allowStart: 시작 버튼을 보일지. 준비 전(W2)에는 녹음 중일 때만 이 줄 전체를 그 자리에 넣고, 시작 버튼은 두지 않는다 (호출하는 쪽에서 false로 둔다)
-struct MenuBarRecordingSection: View {
+/// 녹음 줄: 문제 안내 → 정리 단계(받아쓰는 중 37% 와 막대) → [녹음 시작] 또는 "녹음 중 12:42" [끝내기].
+/// allowStart: 시작 버튼을 보일지. 준비 전에는 녹음 중일 때만 끝내기 줄을 두고 시작 버튼은 두지 않는다
+private struct MenuBarRecordingRow: View {
     @EnvironmentObject private var state: AppState
     let allowStart: Bool
 
     var body: some View {
-        VStack(spacing: 0) {
-            if allowStart, let problem = state.recordingProblem { recordingProblemRow(problem) }
-            if allowStart, let work = state.recordingWork { recordingWorkRow(work) }
-            if allowStart || state.activeRecording != nil { recordingRow }
+        VStack(alignment: .leading, spacing: 10) {
+            if allowStart, let problem = state.recordingProblem { problemRow(problem) }
+            if allowStart, let work = state.recordingWork { workRow(work) }
+            if let active = state.activeRecording {
+                activeRow(active)
+            } else if allowStart {
+                startRow
+            }
         }
     }
 
-    @ViewBuilder private var recordingRow: some View {
-        if let active = state.activeRecording {
-            HStack(spacing: 8) {
-                Circle().fill(Color.red).frame(width: 8, height: 8)
-                TimelineView(.periodic(from: .now, by: 1)) { context in
-                    Text("녹음 중 \(RecordingText.clock(context.date.timeIntervalSince1970 - active.startedAt))")
-                        .font(Brand.suit(11)).foregroundStyle(Brand.text).monospacedDigit()
-                }
+    /// 녹음 시작: 파형 아이콘 (막대 6개, 빨간색 없음)
+    private var startRow: some View {
+        Button { Task { await state.startRecording() } } label: {
+            HStack(spacing: 9) {
+                Waveform()
+                Text("녹음 시작").font(Brand.suit(13, .medium)).foregroundStyle(MenuColor.text)
                 Spacer()
-                Button { Task { await state.stopRecording() } } label: {
-                    HStack(spacing: 6) {
-                        Rectangle().fill(Brand.ink).frame(width: 7, height: 7)
-                        Text("끝내기").font(Brand.suit(11, .medium)).foregroundStyle(Brand.ink)
-                    }
-                    .padding(.horizontal, 12).frame(height: 28)
-                    .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Brand.line))
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
             }
-            .frame(height: 50)
-            .overlay(alignment: .bottom) { hairline }
-        } else if allowStart {
-            Button { Task { await state.startRecording() } } label: {
-                HStack(spacing: 8) {
-                    Circle().fill(Color.red).frame(width: 8, height: 8)
-                    Text("녹음 시작").font(Brand.suit(11)).foregroundStyle(Brand.text)
-                    Spacer()
-                }
-                .frame(height: 50)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .overlay(alignment: .bottom) { hairline }
-        }
-    }
-
-    /// 받아쓰는 중 37% / 녹음을 정리하는 중
-    private func recordingWorkRow(_ work: RecordingPipeline.Step) -> some View {
-        HStack(spacing: 8) {
-            ProgressView().controlSize(.small)
-            Text(work.menuText).font(Brand.suit(11)).foregroundStyle(Brand.tabText)
-            Spacer()
-        }
-        .frame(height: 40)
-        .overlay(alignment: .bottom) { hairline }
-    }
-
-    /// 권한·받아쓰기 설정이 꺼져 있으면: 누르면 고칠 시스템 설정을 연다
-    private func recordingProblemRow(_ problem: RecordingProblem) -> some View {
-        Button { problem.openSettings() } label: {
-            HStack(spacing: 8) {
-                Image(systemName: "exclamationmark.circle").font(.system(size: 14)).foregroundStyle(Brand.ink)
-                Text(problem.text).font(Brand.suit(11)).foregroundStyle(Brand.tabText).lineLimit(2)
-                Spacer()
-                if problem.settingsURL != nil {
-                    Image(systemName: "arrow.up.right").font(.system(size: 10)).foregroundStyle(Brand.tabText)
-                }
-            }
-            .frame(minHeight: 45)
+            .frame(height: 34)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .overlay(alignment: .bottom) { hairline }
     }
 
-    private var hairline: some View { Rectangle().fill(Brand.hairline).frame(height: 1) }
+    private func activeRow(_ active: ActiveRecording) -> some View {
+        HStack(spacing: 8) {
+            Circle().fill(MenuColor.rec).frame(width: 8, height: 8)
+            Text("녹음 중").font(Brand.suit(13, .medium)).foregroundStyle(MenuColor.text)
+            TimelineView(.periodic(from: .now, by: 1)) { context in
+                Text(RecordingText.clock(context.date.timeIntervalSince1970 - active.startedAt))
+                    .font(Brand.suit(13)).foregroundStyle(MenuColor.gray).monospacedDigit()
+            }
+            Spacer(minLength: 8)
+            Button { Task { await state.stopRecording() } } label: {
+                HStack(spacing: 6) {
+                    RoundedRectangle(cornerRadius: 1.5).strokeBorder(MenuColor.sub, lineWidth: 1.2).frame(width: 7, height: 7)
+                    Text("끝내기").font(Brand.suit(11, .medium)).foregroundStyle(MenuColor.sub)
+                }
+                .padding(.horizontal, 12).frame(height: 28)
+                .background(Capsule().fill(MenuColor.chip))
+                .contentShape(Capsule())
+            }
+            .buttonStyle(.plain)
+        }
+        .frame(height: 34)
+    }
+
+    /// 받아쓰는 중 37% 와 막대 / 녹음을 정리하는 중
+    private func workRow(_ work: RecordingPipeline.Step) -> some View {
+        VStack(alignment: .leading, spacing: 7) {
+            HStack(spacing: 8) {
+                ProgressView().controlSize(.small).scaleEffect(0.8).frame(width: 14, height: 14)
+                if case .transcribing(let progress) = work {
+                    Text("받아쓰는 중").font(Brand.suit(13, .medium)).foregroundStyle(MenuColor.text)
+                    Spacer()
+                    Text("\(Int((progress * 100).rounded()))%").font(Brand.suit(11.5, .medium)).foregroundStyle(MenuColor.sub)
+                } else {
+                    Text(work.menuText).font(Brand.suit(13, .medium)).foregroundStyle(MenuColor.text)
+                    Spacer()
+                }
+            }
+            if case .transcribing(let progress) = work {
+                Capsule().fill(MenuColor.track).frame(height: 6)
+                    .overlay(alignment: .leading) {
+                        GeometryReader { g in Capsule().fill(MenuColor.primary).frame(width: max(6, g.size.width * min(1, max(0, progress)))) }
+                    }
+            }
+        }
+        // 접근성과 화면 읽기용으로 한 문장도 함께 둔다 ("받아쓰는 중 37%")
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(work.menuText)
+    }
+
+    /// 권한이나 받아쓰기 설정이 꺼져 있으면: 누르면 고칠 시스템 설정을 연다
+    private func problemRow(_ problem: RecordingProblem) -> some View {
+        Button { problem.openSettings() } label: {
+            HStack(spacing: 8) {
+                Image(systemName: "exclamationmark.circle").font(.system(size: 12)).foregroundStyle(MenuColor.warnText)
+                Text(problem.text).font(Brand.suit(11.5, .medium)).foregroundStyle(MenuColor.warnText).lineLimit(2)
+                Spacer(minLength: 4)
+                if problem.settingsURL != nil {
+                    Image(systemName: "chevron.right").font(.system(size: 9, weight: .semibold)).foregroundStyle(MenuColor.warnText)
+                }
+            }
+            .padding(.horizontal, 12).padding(.vertical, 8)
+            .background(RoundedRectangle(cornerRadius: 8).fill(MenuColor.warnBg))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+/// 파형 아이콘: 가는 막대 6개
+private struct Waveform: View {
+    private let heights: [CGFloat] = [5, 10, 14, 9, 12, 5]
+
+    var body: some View {
+        HStack(spacing: 2) {
+            ForEach(Array(heights.enumerated()), id: \.offset) { _, h in
+                Capsule().fill(MenuColor.sub).frame(width: 2, height: h)
+            }
+        }
+        .frame(height: 14)
+        .accessibilityHidden(true)
+    }
 }
 
 extension RecordingPipeline.Step {

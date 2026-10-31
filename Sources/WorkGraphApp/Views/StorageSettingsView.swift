@@ -19,7 +19,7 @@ struct StorageSettingsView: View {
         .sheet(item: $state.cleanupPreview) { preview in CleanupPreviewSheet(preview: preview).environmentObject(state) }
     }
 
-    static let barColor = Color(hex: 0x5E97C8)   // 켜짐 표시와 같은 파랑
+    static let barColor = Brand.blue   // 켜짐 표시와 같은 파랑
 
     static func size(_ bytes: Int64) -> String { ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file) }
 
@@ -291,7 +291,7 @@ struct CleanupPreviewSheet: View {
                 }
             }
             .padding(.horizontal, 24).frame(height: 63)
-            .background(Color(hex: 0xF6F5F4))
+            .background(Brand.paper)
         }
         .frame(width: 560)
         .background(.white)

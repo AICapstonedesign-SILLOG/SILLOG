@@ -26,6 +26,17 @@ struct GraphWebView: NSViewRepresentable {
 
     func updateNSView(_ webView: WKWebView, context: Context) {
         if context.coordinator.pushedVersion != version { context.coordinator.push(version: version) }
+        // 드로어를 X 로 닫으면 지금 보기에서 기억한 업무도 지운다(보기를 바꿨다 돌아와도 다시 열리지 않게)
+        let open = state.taskDetailOpen
+        if context.coordinator.drawerOpen && !open { webView.evaluateJavaScript("window.WG && window.WG.detailClosed && window.WG.detailClosed()", completionHandler: nil) }
+        context.coordinator.drawerOpen = open
+        // 업무 목록에서 고른 업무를 그래프에도 알림(네 보기가 같은 업무를 고른 채로 반응)
+        let sel = state.selectedTaskId
+        if open, let sel, context.coordinator.sentSel != sel, let key = state.taskList.first(where: { $0.id == sel })?.key {
+            context.coordinator.sentSel = sel
+            webView.callAsyncJavaScript("window.WG && window.WG.select && window.WG.select(key)", arguments: ["key": key], in: nil, in: .page, completionHandler: nil)
+        }
+        if !open { context.coordinator.sentSel = nil }
     }
 
     /// .app 번들이면 Contents/Resources/graph, `swift run` 이면 SwiftPM 리소스 번들.
@@ -38,6 +49,8 @@ struct GraphWebView: NSViewRepresentable {
         private let state: AppState
         weak var webView: WKWebView?
         var pushedVersion = -1
+        var drawerOpen = false
+        var sentSel: Int64?
         private var ready = false
 
         init(state: AppState) { self.state = state }
@@ -68,6 +81,11 @@ struct GraphWebView: NSViewRepresentable {
             case "openApp":                                                 // 카드에서 앱 누르기: 번들 id
                 guard let bundle = body["bundle"] as? String else { return }
                 Task { @MainActor in self.state.openApp(bundle: bundle) }
+            case "ask":                                                   // 그래프 검색창에서 Enter: 그 글로 채팅을 시작
+                guard let q = body["q"] as? String else { return }
+                Task { @MainActor in self.state.askInChat(q) }
+            case "closeTask":                                              // 보기를 바꿨는데 그 보기에서 연 업무가 없으면 드로어를 닫는다
+                Task { @MainActor in self.state.taskDetailOpen = false }
             case "task":                                                    // 그래프에서 업무 누르기: 업무 드로어를 그 업무로 연다 (업무 상세는 드로어 하나)
                 guard let key = body["key"] as? String else { return }
                 Task { @MainActor in self.state.openTaskDetail(key: key) }

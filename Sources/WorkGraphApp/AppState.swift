@@ -13,6 +13,7 @@ final class AppState: ObservableObject {
     @Published var pendingCount = 0
     @Published var lastBatchText = "아직 정리한 적 없음"
     @Published var batchRunning = false
+    @Published var batchResult: Bool?                  // 방금 끝난 지금 정리 결과(창 머리에 체크나 X 로 잠깐 보임). nil = 보이지 않음
     @Published var graphVersion = 0
     @Published var recent: [Observation] = []
     @Published var batches: [BatchRecord] = []
@@ -112,7 +113,7 @@ final class AppState: ObservableObject {
     private let instanceLock = InstanceLock(databasePath: WGDatabase.defaultPath())
     private static let onboardingKey = "workgraph.onboardingCompleted"
     /// Figma OUT-W3 문구
-    static let alreadyRunningMessage = "Sillog이 이미 실행 중이에요. 메뉴 막대의 아이콘을 확인해 주세요."
+    static let alreadyRunningMessage = "SILLOG이 이미 실행 중이에요. 메뉴 막대의 아이콘을 확인해 주세요."
 
     init() {
         settings = AppSettings.load()
@@ -193,7 +194,8 @@ final class AppState: ObservableObject {
 
     private func updatePhase() {
         let previous = phase
-        phase = AppPhase.decide(loggedIn: codexStatus != .loggedOut,
+        // OpenAI 호환 서버(아주대 LLM, API 키)로 연결했으면 ChatGPT 로그인이 없어도 연결된 것으로 본다
+        phase = AppPhase.decide(loggedIn: codexStatus != .loggedOut || settings.llmUsesAPI,
                                 onboardingCompleted: UserDefaults.standard.bool(forKey: Self.onboardingKey))
         onboardingStep = OnboardingFlow.step(after: onboardingStep, phase: phase)
         if previous != phase || !bootstrapLogged {
@@ -211,6 +213,18 @@ final class AppState: ObservableObject {
             await loadCodexModels()
             await runBatch(force: false)                    // 로그인 전에 쌓여 있던 활동이 있으면 바로 정리
         }
+    }
+
+    /// 온보딩 마지막 버튼(화면 기록을 요청한 경우): 마침만 기록하고 앱을 다시 실행한다. 새 실행이 바로 수집을 시작한다
+    func completeOnboardingAndRelaunch() {
+        UserDefaults.standard.set(true, forKey: Self.onboardingKey)
+        relaunch()
+    }
+
+    /// 온보딩에서 API 키(아주대 LLM 포함) 연결 확인이 끝났을 때: 설정을 저장하고 단계를 다시 정해 권한 안내로 넘어가게 한다
+    func finishAPIKeyConnection() {
+        applySettings()
+        updatePhase()
     }
 
     /// 온보딩 1단계의 "로그인 완료, 다음"
@@ -299,18 +313,19 @@ final class AppState: ObservableObject {
     }
 
     private func makeOpenAIClient() -> OpenAICompatClient {
-        let url = URL(string: settings.llmBaseURL.trimmingCharacters(in: .whitespaces)) ?? URL(string: "http://localhost:5010/v1")!
-        return OpenAICompatClient(baseURL: url, model: settings.llmModel, apiKey: settings.llmAPIKey.isEmpty ? nil : settings.llmAPIKey)
+        let e = settings.llmEndpoint
+        let url = URL(string: e.url.trimmingCharacters(in: .whitespaces)) ?? URL(string: "http://localhost:5010/v1")!
+        return OpenAICompatClient(baseURL: url, model: e.model, apiKey: e.key.isEmpty ? nil : e.key)
     }
 
     /// 행 배정(배치)용: 추론 medium. 평가에서 low 보다 업무 판정 +1.6%p, 자료 판정 +4%p 였고 배치는 백그라운드라 지연이 상관없다
     private func makeClient() -> any LLMClient {
-        settings.llmProvider == "openai" ? makeOpenAIClient() : CodexResponsesClient(auth: codexAuth, model: settings.codexModel, reasoningEffort: "medium")
+        settings.llmUsesAPI ? makeOpenAIClient() : CodexResponsesClient(auth: codexAuth, model: settings.codexModel, reasoningEffort: "medium")
     }
 
     /// 파일 정리 제안용: 알림이 바로 떠야 하므로 low
     private func makeQuickClient() -> any LLMClient {
-        settings.llmProvider == "openai" ? makeOpenAIClient() : CodexResponsesClient(auth: codexAuth, model: settings.codexModel, reasoningEffort: "low")
+        settings.llmUsesAPI ? makeOpenAIClient() : CodexResponsesClient(auth: codexAuth, model: settings.codexModel, reasoningEffort: "low")
     }
 
     /// 녹음 정리: 기기 안 받아쓰기(녹음 중 미리 받아쓴 Whisper 글, 없으면 파일 전체를 Whisper 로, 못 쓰면 애플 음성 인식),
@@ -328,9 +343,10 @@ final class AppState: ObservableObject {
     /// Returns: 정리용 설정과 분리된 채팅 전용 연결.
     /// Raises: 없음. 인증·연결 오류는 실제 요청 시 전달된다.
     private func makeChatClient() -> ChatBackend {
-        if settings.chatProvider == "openai" {
-            let url = URL(string: settings.chatBaseURL.trimmingCharacters(in: .whitespaces)) ?? URL(string: "http://localhost:5010/v1")!
-            return .model(OpenAICompatClient(baseURL: url, model: settings.chatModel, apiKey: settings.chatAPIKey.isEmpty ? nil : settings.chatAPIKey))
+        if settings.chatUsesAPI {
+            let e = settings.chatEndpoint
+            let url = URL(string: e.url.trimmingCharacters(in: .whitespaces)) ?? URL(string: "http://localhost:5010/v1")!
+            return .model(OpenAICompatClient(baseURL: url, model: e.model, apiKey: e.key.isEmpty ? nil : e.key))
         }
         return .codex(CodexAppServerClient(auth: codexAuth, model: settings.chatCodexModel))
     }
@@ -355,7 +371,7 @@ final class AppState: ObservableObject {
     /// 서버가 로그인을 폐기했으면(계정에서 Codex 연결 해제 등) 토큰이 지워져 있다. 그때는 수집을 멈추고 로그인 화면을 띄운다.
     func handleAuthLossIfNeeded() async {
         let status = await codexAuth.status()
-        guard settings.llmProvider != "openai", status == .loggedOut, phase == .ready else { return }
+        guard !settings.llmUsesAPI, status == .loggedOut, phase == .ready else { return }
         cancelCodexModelLoading(clear: true)
         codexStatus = status
         codexMessage = "ChatGPT 연결이 끊겨 다시 로그인해야 합니다. 계정 설정에서 Codex 연결을 해제했거나 다른 곳에서 로그아웃하면 이렇게 됩니다."
@@ -557,7 +573,8 @@ final class AppState: ObservableObject {
         guard let batcher, settings.batchEnabled || force, !batchRunning else { return }
         batchRunning = true
         defer { batchRunning = false }
-        var applied = false
+        var applied = false, failed = false
+        batchResult = nil
         for _ in 0..<20 {                                  // 밀린 구간이 많으면 이어서 처리
             let outcome = await batcher.runIfDue(force: force)
             switch outcome {
@@ -567,6 +584,7 @@ final class AppState: ObservableObject {
                 lastBatchText = MenuBarModel.batchSummary(clock: Self.clock.string(from: Date()), newTasks: stats.tasksCreated, resources: stats.resources)
                 continue
             case .failed(let message):
+                failed = true
                 AppLog.write("정리 실패: \(message.prefix(200))")
                 await handleAuthLossIfNeeded()
                 lastBatchText = "\(Self.clock.string(from: Date())) 정리 실패: \(message.prefix(120))"
@@ -577,6 +595,10 @@ final class AppState: ObservableObject {
         }
         if applied { graphVersion += 1; refreshTasks() }
         refresh()
+        if force {                                         // 직접 누른 정리만 결과를 잠깐 보여 준다
+            batchResult = !failed
+            Task { @MainActor in try? await Task.sleep(nanoseconds: 2_500_000_000); if !self.batchRunning { self.batchResult = nil } }
+        }
     }
 
     func togglePause() {
@@ -613,7 +635,7 @@ final class AppState: ObservableObject {
 
     func testLLM() async {
         llmTestResult = "확인 중…"
-        if settings.llmProvider == "openai" {
+        if settings.llmUsesAPI {
             let client = makeOpenAIClient()
             let reachable = await client.ping()
             switch await client.selfTest() {

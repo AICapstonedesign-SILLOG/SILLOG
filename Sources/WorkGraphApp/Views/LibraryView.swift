@@ -37,7 +37,7 @@ private struct LibraryTile: View {
 }
 
 /// 보관함 목록 한 줄: 보관한 자료 또는 녹음
-private enum LibraryEntry: Identifiable {
+enum LibraryEntry: Identifiable {
     case item(ChatLibraryItem)
     case recording(Recording)
 
@@ -60,21 +60,30 @@ struct LibraryView: View {
     @ObservedObject var library: LibraryState
     @EnvironmentObject private var state: AppState
     @State private var query = ""
-    @State private var kind = ""
+    @State private var kind: String       // home 은 홈 화면, 빈 글은 전체
+    @State private var infos: [String: LibraryTextInfo] = [:]
     @State private var preview: ChatLibraryItem?
     @State private var deleting: ChatLibraryItem?
     @State private var recordingPreview: Recording?
 
+    init(library: LibraryState, initialKind: String = "home") {
+        self.library = library
+        _kind = State(initialValue: initialKind)
+    }
+
     private var filtered: [ChatLibraryItem] {
         library.items.filter { item in
-            (query.isEmpty || item.title.localizedCaseInsensitiveContains(query)) && (kind.isEmpty || item.kind == kind)
+            (query.isEmpty || item.title.localizedCaseInsensitiveContains(query)) && (listKind.isEmpty || item.kind == listKind)
         }
     }
 
+    /// 목록에 쓰는 종류: 홈은 전체와 같다
+    private var listKind: String { kind == "home" ? "" : kind }
+
     /// 보관한 자료와 녹음을 날짜순으로
     private var entries: [LibraryEntry] {
-        let items: [LibraryEntry] = kind == "recording" ? [] : filtered.map { LibraryEntry.item($0) }
-        let showRecordings = kind.isEmpty || kind == "recording"
+        let items: [LibraryEntry] = listKind == "recording" ? [] : filtered.map { LibraryEntry.item($0) }
+        let showRecordings = listKind.isEmpty || listKind == "recording"
         let recordings: [LibraryEntry] = showRecordings
             ? state.recordings.filter { query.isEmpty || $0.displayTitle.localizedCaseInsensitiveContains(query) }.map { LibraryEntry.recording($0) }
             : []
@@ -94,6 +103,12 @@ struct LibraryView: View {
         .sheet(item: $preview) { LibraryPreview(library: library, item: $0) }
         .sheet(item: $recordingPreview) { RecordingDetailView(recording: $0).environmentObject(state) }
         .onAppear { state.refreshRecordings() }
+        .onChange(of: query) { _, text in if kind == "home", !text.isEmpty { kind = "" } }
+        .task(id: library.items.map(\.id)) {
+            var found: [String: LibraryTextInfo] = [:]
+            for item in library.items where item.kind == "note" || item.kind == "generated" { found[item.id] = LibraryTextInfo.read(library.store.url(for: item)) }
+            infos = found
+        }
         .alert("자료를 삭제할까요?", isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } })) {
             Button("취소", role: .cancel) { deleting = nil }
             Button("삭제", role: .destructive) { if let deleting { library.delete(deleting) }; deleting = nil }
@@ -114,6 +129,7 @@ struct LibraryView: View {
             }.buttonStyle(.plain).disabled(library.busy).padding(.top, 18)
             Eyebrow("종류").padding(.top, 26).padding(.leading, 12)
             VStack(spacing: 2) {
+                filterRow("홈", kind == "home") { kind = "home" }
                 filterRow("전체 종류", kind.isEmpty) { kind = "" }
                 filterRow("업로드", kind == "upload") { kind = "upload" }
                 filterRow("생성한 결과물", kind == "generated") { kind = "generated" }
@@ -153,53 +169,34 @@ struct LibraryView: View {
                         .font(Brand.suit(12)).foregroundStyle(Brand.gray)
                 }.frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                ScrollView {
-                    LazyVStack(spacing: 0) {
-                        ForEach(entries) { entry in
-                            switch entry {
-                            case .item(let item): row(item)
-                            case .recording(let recording): recordingRow(recording)
-                            }
-                        }
-                    }.padding(.horizontal, 34).padding(.top, 6)
-                }
+                ScrollView { kindContent.padding(.horizontal, 34).padding(.top, 20).padding(.bottom, 24) }
             }
         }.frame(maxWidth: .infinity, maxHeight: .infinity).background(.white)
     }
 
-    private func row(_ item: ChatLibraryItem) -> some View {
-        HStack(alignment: .center, spacing: 12) {
-            Button { preview = item } label: {
-                HStack(spacing: 12) {
-                    LibraryTile(symbol: item.kind == "note" ? "text.book.closed" : "doc.text")
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text(item.title).font(Brand.suit(12, .medium)).foregroundStyle(Brand.tabText).lineLimit(1)
-                        Text("\(item.filename)  \(Date(timeIntervalSince1970: item.createdAt).formatted(date: .abbreviated, time: .shortened))")
-                            .font(Brand.suit(10)).foregroundStyle(Brand.gray)
-                        if !item.extractionNote.isEmpty { Text(item.extractionNote).font(Brand.suit(10)).foregroundStyle(Brand.gray) }
-                    }.frame(maxWidth: .infinity, alignment: .leading)
-                }.contentShape(Rectangle())
-            }.buttonStyle(.plain)
-            Menu {
-                Button("파일 내보내기") { library.export(item) }
-                Button("보관함에서 삭제", role: .destructive) { deleting = item }
-            } label: { Image(systemName: "ellipsis").foregroundStyle(Brand.gray) }.menuStyle(.borderlessButton).frame(width: 30)
-        }.padding(.vertical, 14)
-            .overlay(alignment: .bottom) { Rectangle().fill(Brand.line).frame(height: 1) }
+    private var actions: LibraryActions {
+        LibraryActions(
+            open: { entry in
+                switch entry {
+                case .item(let item): preview = item
+                case .recording(let recording): recordingPreview = recording
+                }
+            },
+            export: { library.export($0) }, delete: { deleting = $0 },
+            projectCount: { library.projectIDs($0).count })
     }
 
-    private func recordingRow(_ recording: Recording) -> some View {
-        Button { recordingPreview = recording } label: {
-            HStack(spacing: 12) {
-                LibraryTile(symbol: "waveform")
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(recording.displayTitle).font(Brand.suit(12, .medium)).foregroundStyle(Brand.tabText).lineLimit(1)
-                    Text(RecordingDetail.subtitle(recording, home: NSHomeDirectory())).font(Brand.suit(10)).foregroundStyle(Brand.gray).lineLimit(1)
-                }.frame(maxWidth: .infinity, alignment: .leading)
-            }.contentShape(Rectangle())
-        }.buttonStyle(.plain)
-            .padding(.vertical, 14)
-            .overlay(alignment: .bottom) { Rectangle().fill(Brand.line).frame(height: 1) }
+    @ViewBuilder private var kindContent: some View {
+        let recs = entries.compactMap { entry -> Recording? in if case .recording(let r) = entry { r } else { nil } }
+        let mine = entries.compactMap { entry -> ChatLibraryItem? in if case .item(let i) = entry { i } else { nil } }
+        switch kind {
+        case "home": LibraryHome(items: library.items, recordings: state.recordings, actions: actions)
+        case "recording": LibraryRecordingList(recordings: recs, actions: actions)
+        case "upload": LibraryUploadList(items: mine, actions: actions)
+        case "generated": LibraryGeneratedGrid(items: mine, actions: actions, infos: infos)
+        case "note": LibraryNoteList(items: mine, actions: actions, infos: infos)
+        default: LibraryAllList(entries: entries, actions: actions)
+        }
     }
 }
 
@@ -358,7 +355,7 @@ struct ProjectSourcesView: View {
                     .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
                     .opacity(hoveredSource == item.id ? 1 : 0).accessibilityLabel("\(item.title) 소스 메뉴")
             }.padding(.horizontal, 16)
-                .background(hoveredSource == item.id ? Color(hex: 0xF6F5F4) : .clear, in: RoundedRectangle(cornerRadius: 8))
+                .background(hoveredSource == item.id ? Brand.paper : .clear, in: RoundedRectangle(cornerRadius: 8))
                 .onHover { hoveredSource = $0 ? item.id : nil }
                 .contextMenu {
                     Button("파일 내보내기") { library.export(item) }
@@ -384,7 +381,7 @@ struct ProjectSourcesView: View {
                     .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
                     .opacity(hoveredSource == path ? 1 : 0).accessibilityLabel("폴더 소스 메뉴")
             }.padding(.horizontal, 16).padding(.vertical, 12).help(path)
-                .background(hoveredSource == path ? Color(hex: 0xF6F5F4) : .clear, in: RoundedRectangle(cornerRadius: 8))
+                .background(hoveredSource == path ? Brand.paper : .clear, in: RoundedRectangle(cornerRadius: 8))
                 .onHover { hoveredSource = $0 ? path : nil }
                 .contextMenu { Button("프로젝트에서 제거") { projects.disconnect(path, from: project) } }
             Rectangle().fill(Brand.line).frame(height: 1)

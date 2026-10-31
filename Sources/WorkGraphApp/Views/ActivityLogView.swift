@@ -276,7 +276,7 @@ struct ActivityLogView: View {
         .background(Color.white)
     }
 
-    static let okColor = Color(hex: 0x5E97C8)   // 대기=회색, 성공=하늘, 실패=빨강
+    static let okColor = Brand.blue   // 대기=회색, 성공=하늘, 실패=빨강
     static let failColor = Color(hex: 0xC0473B)
 
     // MARK: 빈 상태, 불러오는 중

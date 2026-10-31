@@ -192,7 +192,7 @@ private struct PendingSection: View {
                     HStack(spacing: 0) {
                         TreeElbow(last: lastFolder).stroke(Brand.line, lineWidth: 1).frame(width: 20)
                         HStack(spacing: 7) {
-                            Image(systemName: "folder.fill").font(.system(size: 12)).foregroundStyle(Color(hex: 0x5E97C8))
+                            Image(systemName: "folder.fill").font(.system(size: 12)).foregroundStyle(Brand.blue)
                             BoldOnHover(text: (shown as NSString).lastPathComponent, size: 13, on: on).foregroundStyle(Brand.ink).lineLimit(1)
                             Text((shown as NSString).deletingLastPathComponent + "/").font(Brand.suit(11)).foregroundStyle(Brand.gray)
                                 .lineLimit(1).truncationMode(.head)
@@ -487,7 +487,7 @@ private struct FolderBranch: View {
         HStack(spacing: 0) {
             TreeElbow(last: last).stroke(Brand.line, lineWidth: 1).frame(width: 20)
             HStack(spacing: 7) {
-                Image(systemName: "folder.fill").font(.system(size: 12)).foregroundStyle(Color(hex: 0x5E97C8))
+                Image(systemName: "folder.fill").font(.system(size: 12)).foregroundStyle(Brand.blue)
                 Text(name).font(Brand.suit(13)).foregroundStyle(Brand.ink)
                 if !parent.isEmpty { Text(parent).font(Brand.suit(11)).foregroundStyle(Brand.gray) }
                 Spacer(minLength: 8)

@@ -5,7 +5,7 @@ final class FileSuggestionCopyTests: XCTestCase {
     func testBodyMatchesFigmaExample() {
         XCTAssertEqual(FileSuggestionCopy.title, "파일을 정리할까요?")
         XCTAssertEqual(FileSuggestionCopy.body(fileName: "통계학_수업자료.pdf", folder: "/Users/me/Documents/통계학", home: "/Users/me"),
-                       "통계학_수업자료.pdf을 문서 / 통계학 폴더로 옮겨 보세요.")
+                       "통계학_수업자료.pdf\n→ 문서 › 통계학")
     }
 
     func testParticleFollowsLastHangulSyllable() {
@@ -29,7 +29,7 @@ final class FileSuggestionCopyTests: XCTestCase {
         let home = "/Users/me"
         XCTAssertEqual(FileSuggestionCopy.recordingTitle, "받아쓴 녹음을 정리할까요?")
         XCTAssertEqual(FileSuggestionCopy.recordingBody(fileName: "2026-10-10 자료구조 3주차 강의.md", folder: "/Users/me/Documents/학교/자료구조", home: home),
-                       "'2026-10-10 자료구조 3주차 강의.md'를 문서 / 학교 / 자료구조 폴더로 옮겨 보세요.")
+                       "2026-10-10 자료구조 3주차 강의.md\n→ 문서 › 학교 › 자료구조")
         XCTAssertEqual(FileSuggestionCopy.transcribedTitle, "녹음을 받아썼어요")
         XCTAssertEqual(FileSuggestionCopy.transcribedBody(fileName: "2026-10-10 회의.md", folder: "/Users/me/Documents/Sillog 녹음", home: home),
                        "'2026-10-10 회의.md'를 문서 / Sillog 녹음 폴더에 저장했어요.")

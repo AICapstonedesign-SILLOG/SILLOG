@@ -13,6 +13,8 @@ struct TaskSummary: Identifiable, Equatable {
     let sessionCount: Int
     /// 업무가 속한 분야 (Task -PART_OF-> Theme). 없으면 nil — 업무 탭에서 '분야 없음' 폴더로 간다
     var theme: String? = nil
+    /// 업무 목록의 분야 색: 분야(theme)가 있으면 그것, 없으면 업무 종류의 최상위 분류(그래프와 같은 기준)
+    var field: String? = nil
 }
 
 struct SessionSummary: Identifiable, Equatable {
@@ -39,11 +41,14 @@ extension AppState {
             let tx = GraphTx(conn)
             return try tx.nodes(label: NodeLabel.task).map { node in
                 let sessions = try tx.edges(to: node.id, type: EdgeType.partOf).count
-                let type = try tx.edges(from: node.id, type: EdgeType.instanceOf).first.flatMap { try tx.node(id: $0.dst)?.title }
-                return TaskSummary(id: node.id, key: node.key, title: node.title, taskType: type,
+                let typeNode = try tx.edges(from: node.id, type: EdgeType.instanceOf).first.flatMap { try tx.node(id: $0.dst) }
+                var top = typeNode   // SUBCLASS_OF 를 끝까지 올라간 최상위 분류
+                while let cur = top, let up = try tx.edges(from: cur.id, type: EdgeType.subclassOf).first.flatMap({ try tx.node(id: $0.dst) }), up.id != cur.id { top = up }
+                let theme = try ThemeGraph.theme(ofTask: node.id, tx)?.title
+                return TaskSummary(id: node.id, key: node.key, title: node.title, taskType: typeNode?.title,
                                    activeSeconds: node.props["active_seconds"]?.doubleValue ?? 0,
                                    lastActive: node.props["last_active"]?.doubleValue ?? node.updatedAt, sessionCount: sessions,
-                                   theme: try ThemeGraph.theme(ofTask: node.id, tx)?.title)
+                                   theme: theme, field: theme ?? top?.title)
             }
             .filter { $0.sessionCount > 0 }
             .sorted { $0.lastActive > $1.lastActive }
@@ -105,6 +110,16 @@ extension AppState {
     func askAbout(theme title: String) {
         let key = db.flatMap { db in try? db.writer.read { try String.fetchOne($0, sql: "SELECT key FROM nodes WHERE label = ? AND title = ?", arguments: [NodeLabel.theme, title]) } } ?? title
         askAbout(ChatFocus(kind: .theme, key: key, title: title))
+    }
+
+    /// 그래프 검색창에서 Enter: 새 대화로 그 글을 바로 보낸다
+    func askInChat(_ text: String) {
+        guard let chat, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        chat.newConversation()
+        chat.draft = text
+        taskDetailOpen = false
+        selectedTab = .chat
+        chat.send()
     }
 
     private func askAbout(_ focus: ChatFocus) {

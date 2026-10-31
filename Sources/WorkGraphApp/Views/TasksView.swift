@@ -7,6 +7,11 @@ struct TasksView: View {
     @EnvironmentObject private var state: AppState
     @State private var selectedTask: Int64?
     @State private var collapsed: Set<String> = []          // 접은 분야 폴더
+    @State private var fieldFilter: String?                 // 분야 막대에서 고른 분야 (다시 누르면 해제)
+    @State private var rowFrames: [Int64: CGRect] = [:]     // 업무 줄 위치(목록 좌표). 고른 줄 상자를 옮기는 데 씀
+    @State private var boxTop: CGFloat = 0                  // 고른 줄 상자 위 모서리. 위아래를 따로 움직여 물방울처럼 늘었다 모임
+    @State private var boxBottom: CGFloat = 0
+    @State private var boxX = CGRect.zero                   // 가로 위치와 폭(줄마다 같음)
     @State private var sessions: [SessionSummary] = []
     @State private var digests: [Digest] = []
     @State private var tab: DetailTab
@@ -43,8 +48,7 @@ struct TasksView: View {
 
     var body: some View {
         HStack(spacing: 0) {
-            sidebar.frame(width: 276)
-            Rectangle().fill(Brand.hairline).frame(width: 1)
+            sidebar.frame(width: 277)
             if showsDetail {
                 Group {
                     if state.taskList.isEmpty {
@@ -64,7 +68,7 @@ struct TasksView: View {
             state.refreshTasks(); reload()
         }
         .onChange(of: state.selectedTaskId) { _, id in if let id, id != selectedTask { selectedTask = id } }   // 그래프, 같은 맥락 업무에서 고를 때
-        .onChange(of: selectedTask) { _, _ in openKinds = []; reload() }
+        .onChange(of: selectedTask) { _, id in openKinds = []; reload(); moveBox(to: id) }
         .onChange(of: state.graphVersion) { _, _ in state.refreshTasks(); reload() }
         .sheet(item: $editing) { digest in
             DigestEditSheet(digest: digest) { body in
@@ -102,15 +106,55 @@ struct TasksView: View {
         .map { TaskFolder(name: $0, tasks: groups[$0] ?? []) }
     }
 
-    private var sidebar: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            VStack(alignment: .leading, spacing: 0) {
-                HStack(alignment: .firstTextBaseline, spacing: 10) {
-                    Text("업무").font(Brand.suit(23, .semibold)).tracking(-0.8).foregroundStyle(Brand.ink)
-                    Text("\(state.taskList.count)").font(.custom("Jost-Light", size: 19)).foregroundStyle(Brand.gray)
-                }
+    // MARK: 분야 막대 (분야 색은 그래프 index.html 의 FIELD_COLORS, SPARE_COLORS 와 같은 벌)
+
+    struct FieldStat: Identifiable, Equatable {
+        let name: String
+        let count: Int
+        let color: Color
+        var id: String { name }
+    }
+
+    private static let fieldColors: [String: UInt32] = [
+        "산출물작성": 0x4A86C5, "정보수집": 0xE9B23F, "학습": 0xE0533D, "행정처리": 0x8A4E7D, "커뮤니케이션": 0x3D9B6B, "반복작업": 0x6E9F8F,
+    ]
+    private static let spareColors: [UInt32] = [0x9C4A35, 0x2E4D8F]
+    private static let etc = "기타"
+
+    /// 분야별 업무 수와 색. 그래프와 같은 순서: 이름 있는 분야 먼저, 많은 순, 예비색은 그 순서대로. '기타', '분야 없음' 은 맨 끝
+    static func fieldStats(_ tasks: [TaskSummary]) -> [FieldStat] {
+        var counts: [String: Int] = [:]
+        for task in tasks { counts[task.field ?? noField, default: 0] += 1 }
+        let named = counts.keys.filter { $0 != etc && $0 != noField }
+            .sorted { a, b in
+                let known = (fieldColors[a] != nil, fieldColors[b] != nil)
+                return known.0 != known.1 ? known.0 : (counts[a] ?? 0, b) > (counts[b] ?? 0, a)
             }
-            .padding(.horizontal, 24).padding(.top, 27).padding(.bottom, 20)
+        var spare = 0
+        var stats = named.map { name -> FieldStat in
+            var hex: UInt32 = 0xB9B3AE
+            if let known = fieldColors[name] { hex = known } else if spare < spareColors.count { hex = spareColors[spare]; spare += 1 }
+            return FieldStat(name: name, count: counts[name] ?? 0, color: Color(hex: hex))
+        }
+        if let n = counts[etc] { stats.append(FieldStat(name: etc, count: n, color: Color(hex: 0x9B9490))) }
+        if let n = counts[noField] { stats.append(FieldStat(name: noField, count: n, color: Color(hex: 0xB9B3AE))) }
+        return stats
+    }
+
+    private var sidebar: some View {
+        let fields = Self.fieldStats(state.taskList)
+        let filter = fields.contains { $0.name == fieldFilter } ? fieldFilter : nil           // 그 분야 업무가 없어졌으면 해제로 본다
+        let shown = filter.map { f in state.taskList.filter { ($0.field ?? Self.noField) == f } } ?? state.taskList   // 받은 순서(최근 활동 순) 그대로
+        let colors = Dictionary(uniqueKeysWithValues: fields.map { ($0.name, $0.color) })
+        return VStack(alignment: .leading, spacing: 0) {
+            VStack(alignment: .leading, spacing: 14) {
+                HStack(alignment: .firstTextBaseline, spacing: 9) {
+                    Text("업무").font(Brand.suit(23, .bold)).tracking(-0.8).foregroundStyle(Brand.ink)
+                    Text("\(state.taskList.count)").font(Brand.suit(19)).foregroundStyle(Brand.gray)
+                }
+                if !fields.isEmpty { fieldBar(fields, filter: filter) }
+            }
+            .padding(.horizontal, 27).padding(.top, 27).padding(.bottom, 12)
             .frame(maxWidth: .infinity, alignment: .leading)
 
             if state.taskList.isEmpty {
@@ -120,33 +164,66 @@ struct TasksView: View {
                     Text("활동이 쌓여 정리되면 업무가 여기에 모여요.").font(Brand.suit(11)).foregroundStyle(Brand.gray)
                         .fixedSize(horizontal: false, vertical: true)
                 }
-                .padding(.horizontal, 24)
+                .padding(.horizontal, 27)
                 Spacer()
             } else {
                 ScrollView {
-                    VStack(alignment: .leading, spacing: 2) {
-                        ForEach(Self.folders(state.taskList)) { folder in
-                            folderRow(folder)
-                            if !collapsed.contains(folder.name) {
-                                ForEach(folder.tasks) { task in taskRow(task) }
-                            }
+                    VStack(alignment: .leading, spacing: 8) {
+                        ForEach(shown) { task in taskRow(task, color: colors[task.field ?? Self.noField] ?? Brand.sub) }
+                    }
+                    .coordinateSpace(name: "taskList")
+                    .background(alignment: .topLeading) {                                     // 고른 줄: 연한 상자 하나가 줄 사이를 옮겨 다님
+                        if boxBottom > boxTop {
+                            RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Color(hex: 0xECE6E0))
+                                .frame(width: boxX.width, height: boxBottom - boxTop).offset(x: boxX.minX, y: boxTop)
                         }
                     }
-                    .padding(.horizontal, 12).padding(.bottom, 12)
+                    .onPreferenceChange(RowFrameKey.self) { frames in rowFrames = frames; snapBox() }
+                    .backgroundPreferenceValue(TimelineDotKey.self) { dots in timelineSpine(dots) }   // 점들을 잇는 점선
+                    .padding(.bottom, 16)
                 }
+                .thinScrollLight()
             }
-            Rectangle().fill(Brand.hairline).frame(height: 1)
-            HStack(spacing: 7) {
-                Rectangle().fill(Brand.ink).frame(width: 4, height: 4)
-                Text("이 Mac에 저장된 업무 기록").font(Brand.suit(9)).foregroundStyle(Brand.gray)
-            }
-            .padding(.horizontal, 24).frame(height: 37)
         }
-        .brandGlass()
-        .overlay(alignment: .trailing) { Rectangle().fill(Brand.hairline).frame(width: 1) }
+        .background(Brand.paper)                                                         // 업무 목록 바탕: 아이콘 줄과 본문 사이 톤
     }
 
-    /// 폴더 줄: 펼침 화살표, 폴더, 분야 이름, 업무 수. 누르면 접고 펼친다
+    /// 분야 비율 막대: 분야마다 업무 수에 비례한 둥근 조각. 누르면 그 분야만, 다시 누르면 전체
+    private func fieldBar(_ fields: [FieldStat], filter: String?) -> some View {
+        GeometryReader { geo in
+            let total = CGFloat(fields.reduce(0) { $0 + $1.count })
+            let room = geo.size.width - 3 * CGFloat(fields.count - 1)
+            HStack(spacing: 3) {
+                ForEach(fields) { field in
+                    Button { fieldFilter = filter == field.name ? nil : field.name } label: {
+                        RoundedRectangle(cornerRadius: 4).fill(field.color)
+                            .opacity(filter == nil || filter == field.name ? 1 : 0.28)
+                            .frame(width: max(8, room * CGFloat(field.count) / total), height: 8)
+                            .contentShape(Rectangle().inset(by: -4))
+                    }
+                    .buttonStyle(.plain)
+                    .help("\(field.name) \(field.count)개")
+                    .accessibilityLabel("\(field.name) 분야, 업무 \(field.count)개")
+                }
+            }
+        }
+        .frame(height: 8)
+    }
+
+    /// 업무 점(10pt)들의 위치를 모아 첫 점부터 마지막 점까지 점선(1.5pt, 3/4)을 긋는다
+    private func timelineSpine(_ dots: [Anchor<CGRect>]) -> some View {
+        GeometryReader { geo in
+            if let first = dots.first, let last = dots.last {
+                Path { path in
+                    path.move(to: CGPoint(x: geo[first].midX, y: geo[first].midY))
+                    path.addLine(to: CGPoint(x: geo[last].midX, y: geo[last].midY))
+                }
+                .stroke(Color(hex: 0xCFC8C1), style: StrokeStyle(lineWidth: 1.5, dash: [3, 4]))
+            }
+        }
+    }
+
+    /// 폴더 줄: 펼침 화살표, 분야 이름, 업무 수. 누르면 접고 펼친다
     private func folderRow(_ folder: TaskFolder) -> some View {
         let open = !collapsed.contains(folder.name)
         return Button {
@@ -155,7 +232,6 @@ struct TasksView: View {
             HStack(spacing: 7) {
                 Image(systemName: "chevron.right").font(.system(size: 9, weight: .semibold)).foregroundStyle(Brand.gray)
                     .rotationEffect(.degrees(open ? 90 : 0)).frame(width: 10)
-                Image(systemName: "folder").font(.system(size: 12)).foregroundStyle(Brand.tabText).frame(width: 16)
                 Text(folder.name).font(Brand.suit(12, .medium)).foregroundStyle(Brand.ink).lineLimit(1)
                 Spacer(minLength: 6)
                 Text("\(folder.tasks.count)").font(.custom("Jost-Light", size: 13)).foregroundStyle(Brand.gray)
@@ -173,34 +249,72 @@ struct TasksView: View {
         .padding(.top, 6)
     }
 
-    /// 업무 줄: 폴더 안으로 들여 문서처럼. 제목과 작업 시간, 아래에 작은 종류 (세션 수·마지막 활동은 오른쪽 상세에)
-    private func taskRow(_ task: TaskSummary) -> some View {
+    /// 업무 줄(타임라인): 분야 색 점, 제목 한 줄, 아래에 분야 › 종류와 작업 시간. 고른 줄은 점에 연한 고리, 제목은 굵게
+    private func taskRow(_ task: TaskSummary, color: Color) -> some View {
         let on = task.id == selectedTask
-        return Button { selectedTask = task.id; onSelect(task.id) } label: {
-            HStack(alignment: .top, spacing: 7) {
-                Image(systemName: "doc.text").font(.system(size: 11)).foregroundStyle(on ? Brand.ink : Brand.gray)
-                    .frame(width: 16).padding(.top, 1)
+        let field = task.field ?? Self.noField
+        let type = task.taskType.flatMap { $0.isEmpty || $0 == field ? nil : $0 }              // 종류가 없으면 분야만
+        let meta = type.map { t in
+            Text("\(Text(field).font(Brand.suit(11, .medium)).foregroundStyle(Color(hex: 0x6E6862)))\(Text(" › ").font(Brand.suit(11)).foregroundStyle(Color(hex: 0xB8AFA8)))\(Text(t).font(Brand.suit(11)).foregroundStyle(Color(hex: 0x8C837C)))")
+        } ?? Text(field).font(Brand.suit(11, .medium)).foregroundStyle(Color(hex: 0x6E6862))
+        return Button {
+            if on {   // 고른 업무를 다시 누르면: 상자 지우고, 그래프 확대 풀고, 업무 상세도 닫는다
+                selectedTask = nil; state.selectedTaskId = nil; state.taskDetailOpen = false
+                return
+            }
+            selectedTask = task.id
+            onSelect(task.id)
+        } label: {
+            HStack(alignment: .top, spacing: 9) {
+                ZStack {
+                    if on { Circle().fill(color.opacity(0.25)).frame(width: 20, height: 20) }      // 고리: 점 둘레 5pt (제자리에서 나타남)
+                    Circle().fill(color).frame(width: 10, height: 10)
+                        .anchorPreference(key: TimelineDotKey.self, value: .bounds) { [$0] }
+                }
+                .frame(width: 14, height: 10).padding(.top, 4)
                 VStack(alignment: .leading, spacing: 3) {
+                    Text(task.title).font(Brand.suit(14, on ? .bold : .medium)).foregroundStyle(Color(hex: 0x2A201B)).lineLimit(1)
                     HStack(alignment: .firstTextBaseline, spacing: 6) {
-                        Text(task.title).font(Brand.suit(12)).foregroundStyle(Brand.ink).lineLimit(1)
+                        meta.lineLimit(1)
                         Spacer(minLength: 4)
-                        Text(Self.duration(task.activeSeconds)).font(Brand.suit(10)).foregroundStyle(Brand.tabText).fixedSize()
+                        Text(Self.rowDuration(task.activeSeconds)).font(Brand.suit(11)).foregroundStyle(Color(hex: 0x8C837C)).fixedSize()
                     }
-                    if let type = task.taskType { Text(type).font(Brand.suit(9)).foregroundStyle(Brand.gray) }
                 }
             }
-            .padding(.leading, 25).padding(.trailing, 10).padding(.vertical, 8)          // 폴더 아이콘 아래로 들여쓰기
+            .padding(.horizontal, 15).padding(.vertical, 12)                             // 점 칸이 왼쪽에서 27 에 오게 (바깥 12 + 안쪽 15)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .hoverHighlight(cornerRadius: 5, active: !on)
-            .background(on ? RoundedRectangle(cornerRadius: 5).fill(.white.opacity(0.64)) : nil)
-            .overlay(RoundedRectangle(cornerRadius: 5).strokeBorder(on ? Brand.hairline : .clear))
-            .overlay(alignment: .leading) { if on { Rectangle().fill(Brand.ink).frame(width: 2).padding(.vertical, 8) } }
+            .background(GeometryReader { g in Color.clear.preference(key: RowFrameKey.self, value: [task.id: g.frame(in: .named("taskList"))]) })
+            .hoverHighlight(cornerRadius: 8, active: !on)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .padding(.horizontal, 12)
         .contextMenu {
             Button("이 업무로 묻기") { state.askAbout(task: task) }
         }
+    }
+
+    /// 업무 줄의 시간: 1분이 안 되면 '1분 미만'
+    static func rowDuration(_ seconds: Double) -> String { seconds < 60 ? "1분 미만" : duration(seconds) }
+
+    /// 고른 줄 상자를 옮김: 가는 쪽 모서리가 먼저 빠르게 늘어나고, 떠나는 쪽 모서리가 조금 늦게 따라와 모임(물방울)
+    private func moveBox(to id: Int64?) {
+        guard let id, let f = rowFrames[id] else { boxTop = 0; boxBottom = 0; return }
+        boxX = f
+        guard boxBottom > boxTop else { boxTop = f.minY; boxBottom = f.maxY; return }        // 처음 고르면 그 자리에 바로
+        let lead = Animation.spring(response: 0.24, dampingFraction: 0.8), trail = Animation.spring(response: 0.55, dampingFraction: 0.68).delay(0.06)
+        if f.minY > boxTop {   // 아래로: 아래 모서리가 먼저, 위 모서리가 늦게
+            withAnimation(lead) { boxBottom = f.maxY }; withAnimation(trail) { boxTop = f.minY }
+        } else {
+            withAnimation(lead) { boxTop = f.minY }; withAnimation(trail) { boxBottom = f.maxY }
+        }
+    }
+
+    /// 줄 위치가 바뀌면(분야 거르기, 목록 갱신) 상자를 애니메이션 없이 고른 줄에 맞춤
+    private func snapBox() {
+        guard let id = selectedTask, let f = rowFrames[id] else { boxTop = 0; boxBottom = 0; return }
+        boxX = f
+        if boxTop != f.minY || boxBottom != f.maxY { var t = Transaction(); t.disablesAnimations = true; withTransaction(t) { boxTop = f.minY; boxBottom = f.maxY } }
     }
 
     // MARK: 오른쪽 상세
@@ -241,7 +355,6 @@ struct TasksView: View {
             }
             .padding(.horizontal, 33).padding(.vertical, 30)
             .frame(maxWidth: .infinity, minHeight: 155, alignment: .leading)
-            .overlay(alignment: .bottom) { Rectangle().fill(Brand.line).frame(height: 1) }
 
             if !state.offTaskToday.isEmpty {
                 // 업무 외(집중 이탈): 업무, 세션, 자료 없이 시간만
@@ -250,7 +363,6 @@ struct TasksView: View {
                 Text("업무 외 오늘 \(Self.duration(total)), \(top)")
                     .font(Brand.suit(11)).foregroundStyle(Brand.gray).lineLimit(1)
                     .padding(.horizontal, 33).frame(height: 44, alignment: .leading).frame(maxWidth: .infinity, alignment: .leading)
-                    .overlay(alignment: .bottom) { Rectangle().fill(Brand.line).frame(height: 1) }
             }
 
             ScrollView {
@@ -277,7 +389,7 @@ struct TasksView: View {
                         .frame(maxWidth: .infinity).padding(.vertical, 40)
                     } else {
                         ForEach(Array(sessions.enumerated()), id: \.element.id) { index, session in
-                            sessionRow(session, first: index == 0, last: index == sessions.count - 1)
+                            sessionRow(session, first: index == 0)
                         }
                     }
                 }
@@ -337,7 +449,6 @@ struct TasksView: View {
             }
         }
         .padding(.top, 28).padding(.bottom, 28)
-        .overlay(alignment: .bottom) { Rectangle().fill(Brand.line).frame(height: 1) }
     }
 
     /// 큰 숫자와 작은 단위를 한 글줄로 (예: 2 시간  40 분). 칸이 좁으면(드로어가 줄면) 잘리지 않고 통째로 작아진다
@@ -359,21 +470,17 @@ struct TasksView: View {
         }
         .padding(.leading, leading ? 29 : 0)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .overlay(alignment: .leading) { if leading { Rectangle().fill(Brand.line).frame(width: 1) } }
     }
 
-    private func sessionRow(_ session: SessionSummary, first: Bool, last: Bool) -> some View {
+    private func sessionRow(_ session: SessionSummary, first: Bool) -> some View {
         let start = Date(timeIntervalSince1970: session.start)
         let range = Self.clock.string(from: start) + (session.end > session.start ? " — " + Self.clock.string(from: Date(timeIntervalSince1970: session.end)) : "")
         let meta = [session.apps.joined(separator: ", "), session.resourceCount > 0 ? "자료 \(session.resourceCount)개" : ""].filter { !$0.isEmpty }
         return HStack(alignment: .top, spacing: 18) {
-            ZStack(alignment: .top) {
-                if !last { Rectangle().fill(Brand.line).frame(width: 1).padding(.top, 7) }
-                RoundedRectangle(cornerRadius: 1).fill(first ? Brand.ink : .white)
-                    .overlay(RoundedRectangle(cornerRadius: 1).strokeBorder(first ? Brand.ink : Color(hex: 0xBDB5AE)))
-                    .frame(width: 7, height: 7).padding(.top, 7)
-            }
-            .frame(width: 9)
+            RoundedRectangle(cornerRadius: 1).fill(first ? Brand.ink : .white)
+                .overlay(RoundedRectangle(cornerRadius: 1).strokeBorder(first ? Brand.ink : Color(hex: 0xBDB5AE)))
+                .frame(width: 7, height: 7).padding(.top, 7)
+                .frame(width: 9)
             VStack(alignment: .leading, spacing: 0) {
                 HStack(spacing: 14) {
                     Text(Self.dayLabel(start)).font(Brand.suit(11, .medium)).foregroundStyle(Brand.tabText)
@@ -631,7 +738,6 @@ struct ResumeSheet: View {
                 .buttonStyle(.plain)
             }
             .padding(.horizontal, 32).padding(.top, 26).padding(.bottom, 20)
-            Rectangle().fill(Brand.line).frame(height: 1)
             if request.plan.items.isEmpty {
                 VStack(spacing: 14) {
                     Image(systemName: "square.3.stack.3d").font(.system(size: 26, weight: .light)).foregroundStyle(Brand.sub)
@@ -650,7 +756,6 @@ struct ResumeSheet: View {
                 }
                 .frame(minHeight: 220, maxHeight: 375)
             }
-            Rectangle().fill(Brand.line).frame(height: 1)
             HStack(spacing: 8) {
                 Spacer()
                 Button("취소") { state.resumeRequest = nil }.keyboardShortcut(.cancelAction)
@@ -661,7 +766,7 @@ struct ResumeSheet: View {
                     .opacity(request.plan.selectedItems.isEmpty ? 0.4 : 1)
             }
             .padding(.horizontal, 24).frame(height: 63)
-            .background(Color(hex: 0xF6F5F4))
+            .background(Brand.paper)
         }
         .frame(width: 600)
         .background(.white)
@@ -691,9 +796,8 @@ struct ResumeSheet: View {
                 }
                 Spacer()
             }
-            .padding(.vertical, 8)
+            .padding(.vertical, 10)                                                       // 줄 사이 선 대신 간격
             .frame(maxWidth: .infinity, alignment: .leading)
-            .overlay(alignment: .bottom) { Rectangle().fill(Brand.line).frame(height: 1) }
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -738,7 +842,6 @@ struct DigestEditSheet: View {
                 Text(digest.title).font(Brand.suit(12)).foregroundStyle(Brand.gray).lineLimit(1).padding(.top, 10)
             }
             .padding(.horizontal, 32).padding(.top, 26).padding(.bottom, 18)
-            Rectangle().fill(Brand.line).frame(height: 1)
             TextEditor(text: $text)
                 .font(Brand.suit(12)).scrollContentBackground(.hidden)
                 .padding(12)
@@ -747,7 +850,6 @@ struct DigestEditSheet: View {
                 .padding(.horizontal, 32).padding(.top, 18)
             Text("저장하면 '수정함'으로 바뀌고 자동으로 다시 만들지 않아요. 채팅도 고친 내용을 요약으로 읽어요.")
                 .font(Brand.suit(11)).foregroundStyle(Brand.gray).padding(.horizontal, 32).padding(.vertical, 12)
-            Rectangle().fill(Brand.line).frame(height: 1)
             HStack(spacing: 8) {
                 Spacer()
                 Button("취소", action: cancel).keyboardShortcut(.cancelAction).buttonStyle(BrandButtonStyle(kind: .secondary))
@@ -755,7 +857,7 @@ struct DigestEditSheet: View {
                     .disabled(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
             .padding(.horizontal, 24).frame(height: 63)
-            .background(Color(hex: 0xF6F5F4))
+            .background(Brand.paper)
         }
         .frame(width: 640)
         .background(.white)
@@ -784,4 +886,16 @@ private struct TasksErrorView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
+}
+
+/// 업무 줄 위치(목록 좌표)
+private struct RowFrameKey: PreferenceKey {
+    static var defaultValue: [Int64: CGRect] = [:]
+    static func reduce(value: inout [Int64: CGRect], nextValue: () -> [Int64: CGRect]) { value.merge(nextValue()) { $1 } }
+}
+
+/// 업무 점들의 위치를 모은다 (점선을 첫 점에서 마지막 점까지 긋는 데 쓴다)
+private struct TimelineDotKey: PreferenceKey {
+    static var defaultValue: [Anchor<CGRect>] = []
+    static func reduce(value: inout [Anchor<CGRect>], nextValue: () -> [Anchor<CGRect>]) { value += nextValue() }
 }

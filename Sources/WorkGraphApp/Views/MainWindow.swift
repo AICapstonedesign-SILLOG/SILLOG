@@ -1,66 +1,74 @@
 import SwiftUI
 import WorkGraphCore
 
-/// 창 맨 왼쪽 세로 막대: 그래프, 채팅, 기록 자료, 설정 아이콘과 맨 아래 계정 동그라미
+/// 창 맨 왼쪽 세로 막대: 그래프, 채팅, 기록 자료가 위에, 설정과 계정 동그라미가 맨 아래. 탭마다 아이콘 아래 작은 글자
 struct NavRail: View {
-    static let width: CGFloat = 48
+    static let width: CGFloat = 72
     @EnvironmentObject private var state: AppState
 
+    /// lucide 줄 아이콘 경로: share-2, message-circle, archive, settings
     private func icon(_ tab: MainWindow.Tab) -> String {
         switch tab {
-        case .graph: "point.3.connected.trianglepath.dotted"
-        case .chat: "bubble.left"
-        case .records: "tray.full"
-        case .settings: "gearshape"
+        case .graph: RailIcon.graph
+        case .chat: RailIcon.chat
+        case .records: RailIcon.records
+        case .settings: RailIcon.settings
         }
+    }
+
+    private func railTab(_ tab: MainWindow.Tab) -> some View {
+        let on = state.selectedTab == tab
+        return Button { state.selectedTab = tab } label: {
+            VStack(spacing: 4) {
+                SVGIcon(d: icon(tab))
+                    .stroke(Brand.tabText, style: StrokeStyle(lineWidth: on ? 1.8 : 1.5, lineCap: .round, lineJoin: .round))
+                    .frame(width: 18, height: 18)
+                Text(tab.rawValue).font(Brand.suit(10, on ? .semibold : .regular)).lineLimit(1)
+            }
+            .foregroundStyle(on ? Brand.ink : Brand.tabText)
+            .frame(width: 60, height: 56)
+            .background(RoundedRectangle(cornerRadius: 12).fill(on ? Color(hex: 0xF7F5F2) : .clear))   // 고른 탭 알약, 아이콘 줄보다 한 단계 밝게
+            .hoverHighlight(cornerRadius: 12, active: !on)
+            .overlay(alignment: .topTrailing) {
+                if tab == .records, state.pendingFileSuggestions > 0 { Circle().fill(Brand.sky).frame(width: 7, height: 7).offset(x: -17, y: 10) }   // 숫자 대신 점
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(tab.rawValue)
     }
 
     var body: some View {
-        VStack(spacing: 6) {
-            ForEach(MainWindow.Tab.allCases) { tab in
-                let on = state.selectedTab == tab
-                Button { state.selectedTab = tab } label: {
-                    Image(systemName: icon(tab)).font(.system(size: 15, weight: on ? .semibold : .regular))
-                        .foregroundStyle(on ? Brand.ink : Brand.tabText)
-                        .frame(width: 36, height: 36)
-                        .background(RoundedRectangle(cornerRadius: 10).fill(on ? Color(hex: 0xF7F5F2) : .clear))   // 고른 탭 알약, 흰색보다 한 단계 어둡게
-                        .hoverHighlight(cornerRadius: 10, active: !on)
-                        .overlay(alignment: .topTrailing) {
-                            if tab == .records, state.pendingFileSuggestions > 0 { Circle().fill(Brand.sky).frame(width: 7, height: 7).offset(x: -3, y: 4) }   // 아이콘만이라 숫자 대신 점
-                        }
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .railLabel(tab.rawValue)
-                .accessibilityLabel(tab.rawValue)
-            }
+        VStack(spacing: 8) {
+            ForEach(MainWindow.Tab.allCases) { railTab($0) }   // 설정도 다른 탭과 한 줄에 (맨 아래로 내리지 않는다)
             Spacer(minLength: 0)
-            AccountDot()
+            AccountDot().padding(.top, 8)
         }
-        .padding(.top, 10).padding(.bottom, 12).padding(.horizontal, 6)
+        .padding(.top, 10).padding(.bottom, 14).padding(.horizontal, 6)
         .frame(width: Self.width)
         .frame(maxHeight: .infinity)
-        .background(Color(hex: 0xEFECE9))                    // 창 머리와 같은 톤, 흰색보다 한 단계 낮춤
-        .overlay(alignment: .trailing) { Rectangle().fill(Brand.hairline).frame(width: 1) }
+        .background(Color(hex: 0xEFECE9))                    // 창 머리와 같은 톤. 구획선 없이 바탕 톤 차이로만 나눈다
     }
 }
 
-/// 아이콘 줄 맨 아래 계정 동그라미: 로그인한 이메일 앞 두 글자. 누르면 설정의 AI 연결
+/// 아이콘 줄 맨 아래 계정 동그라미: 로그인한 이메일 앞 두 글자. 누르면 계정 상자(AccountPopover)
 private struct AccountDot: View {
     @EnvironmentObject private var state: AppState
+    @State private var open = false
     private var email: String? { if case .loggedIn(let email, _, _) = state.codexStatus { return email }; return nil }
     var body: some View {
         let initials = String((email ?? "?").prefix(2)).uppercased()
-        Button { state.settingsSection = .ai; state.selectedTab = .settings } label: {   // 계정 연결은 AI 연결 구역
-            Text(initials).font(Brand.suit(11, .semibold)).foregroundStyle(.white)
-                .frame(width: 30, height: 30).background(Circle().fill(Brand.ink))
+        Button { open.toggle() } label: {
+            Text(initials).font(Brand.suit(11, .semibold)).foregroundStyle(Brand.badgeText)
+                .frame(width: 32, height: 32).background(Circle().fill(Brand.badgeFill))
                 .frame(width: 36, height: 36).contentShape(Circle())
         }
         .buttonStyle(.plain).railLabel(email ?? "계정").accessibilityLabel("계정 \(email ?? "")")
+        .popover(isPresented: $open, arrowEdge: .trailing) { AccountPopover().environmentObject(state) }
     }
 }
 
-/// 아이콘 줄 이름표: 커서를 대면 오른쪽에 작은 이름표가 바로 뜬다 (기본 도움말은 늦게 떠서)
+/// 계정 동그라미 이름표: 커서를 대면 오른쪽에 이메일이 바로 뜬다 (기본 도움말은 늦게 떠서). 탭은 글자가 보여 이름표가 없다
 private struct RailLabel: ViewModifier {
     let text: String
     @State private var hover = false
@@ -69,10 +77,11 @@ private struct RailLabel: ViewModifier {
             .onHover { hover = $0 }
             .overlay(alignment: .leading) {
                 if hover {
-                    Text(text).font(Brand.suit(11, .medium)).foregroundStyle(.white).fixedSize()
+                    Text(text).font(Brand.suit(11, .medium)).foregroundStyle(Brand.ink).fixedSize()
                         .padding(.horizontal, 8).padding(.vertical, 4)
-                        .background(RoundedRectangle(cornerRadius: 6).fill(Brand.ink.opacity(0.88)))
-                        .offset(x: 44).allowsHitTesting(false)
+                        .background(RoundedRectangle(cornerRadius: 6).fill(.white))
+                        .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Brand.pillFill))
+                        .offset(x: 58).allowsHitTesting(false)       // 동그라미 36 + 줄 가장자리 18 + 간격 4
                         .transition(.opacity)
                 }
             }
@@ -81,18 +90,123 @@ private struct RailLabel: ViewModifier {
 }
 private extension View { func railLabel(_ text: String) -> some View { modifier(RailLabel(text: text)) } }
 
-/// 창 머리 오른쪽 위: 녹음과 지금 정리. 메뉴 막대 아이콘이 노치 뒤로 가려져도 창에서 녹음할 수 있다
-struct TitleBarControls: View {
+/// 창 머리 왼쪽 (Figma 851:354): 빈칸과 SILLOG 글자, 가는 구분선, 연결 알약, 정리 알약
+private struct TitleBarBrand: View {
     var body: some View {
-        HStack(spacing: 16) {
-            RecordingTitleControl()
+        HStack(spacing: 12) {
+            Color.clear.frame(width: 18, height: 4)       // 신호등 다음 빈칸 (Figma 851:359, 아이콘은 없앴다)
+            if let mark = Brand.wordmark {
+                Image(nsImage: mark).resizable().scaledToFit().frame(height: 17).accessibilityLabel("SILLOG")
+            } else {
+                Text("SILLOG").font(Brand.suit(13, .semibold)).foregroundStyle(Brand.ink)
+            }
+            Rectangle().fill(Brand.line).frame(width: 1, height: 14)
+            TitleConnection()
             TitleRefresh()
         }
-        .padding(.trailing, 14)                                   // 아래 본문 오른쪽 끝과 맞춘다
+        .padding(.leading, 6)
     }
 }
 
-/// 창 머리의 녹음: 메뉴 막대 녹음 줄과 같은 상태를 보인다. 평소 [● 녹음 시작], 녹음 중 "● 녹음 중 12:31" [■ 끝내기], 정리 중 "받아쓰는 중 37%".
+/// 연결 알약 (Figma 923:2819): [로고 이름 | 모델 ●]. ChatGPT 구독이면 OpenAI 로고와 요금제, 아주대 LLM 방식이면 아주대 LLM API, OpenAI 호환 서버면 주소로 Claude API 를 가리고 그 밖은 링크와 API.
+/// 점은 연결됨 초록, 아니면 회색
+private struct TitleConnection: View {
+    @EnvironmentObject private var state: AppState
+    private var compat: Bool { state.settings.chatUsesAPI }
+    private var host: String { URL(string: state.settings.chatEndpoint.url)?.host?.lowercased() ?? "" }
+    private var ajou: Bool { state.settings.chatProvider == "ajou" }
+    private var plan: String? { if case .loggedIn(_, let plan, _) = state.codexStatus, let plan, !plan.isEmpty { return plan }; return nil }
+    private var label: String {
+        if !compat { return plan.map { "ChatGPT \($0.prefix(1).uppercased() + $0.dropFirst())" } ?? "ChatGPT" }
+        if ajou { return "아주대 LLM API" }
+        if host.contains("anthropic") { return "Claude API" }
+        return "API"
+    }
+    private var connected: Bool {
+        if ajou { return !state.settings.ajouAPIKey.isEmpty }
+        if compat { return !state.settings.chatBaseURL.isEmpty }
+        if case .loggedIn = state.codexStatus { return true }
+        return false
+    }
+
+    var body: some View {
+        HStack(spacing: 6) {
+            logo.frame(width: 13, height: 13)
+            Text(label).font(Brand.suit(12, .medium)).foregroundStyle(Color(hex: 0x4A3E37))
+            Rectangle().fill(Color(hex: 0xCFC8C1)).frame(width: 1, height: 10)
+            Text(Self.modelTitle(state.settings.chatModelName)).font(Brand.suit(11.5)).foregroundStyle(Color(hex: 0x7A716B)).lineLimit(1)
+            Circle().fill(connected ? Brand.connected : Brand.sub).frame(width: 6, height: 6)
+        }
+        .padding(.horizontal, 10).frame(height: 24)
+        .background(Capsule().fill(Brand.pillFill))
+        .help(connected ? "연결됨" : "연결되지 않음")
+    }
+
+    @ViewBuilder private var logo: some View {
+        if !compat, let mark = Brand.openAIMark {
+            Image(nsImage: mark).renderingMode(.template).resizable().scaledToFit().foregroundStyle(Color(hex: 0x4A3E37))
+        } else if ajou, let emblem = Brand.ajouEmblem {
+            Image(nsImage: emblem).resizable().scaledToFit().scaleEffect(14 / 13)
+        } else if compat, host.contains("anthropic") {
+            SVGIcon(d: Brand.claudePath).fill(Color(hex: 0xD97757))
+        } else {
+            SVGIcon(d: RailIcon.link).stroke(Brand.tabText, style: StrokeStyle(lineWidth: 2, lineCap: .round, lineJoin: .round))
+        }
+    }
+
+    /// 모델 이름을 읽기 좋게: gpt-6-luna → GPT-6 Luna, claude-opus-5-5 → Claude Opus 5.5
+    static func modelTitle(_ id: String) -> String {
+        var out = [String]()
+        for part in id.split(separator: "-").map(String.init) {
+            let isNum = part.first?.isNumber == true
+            if isNum, let last = out.last, last.hasPrefix("GPT") || last.last?.isNumber == true {
+                out[out.count - 1] = last + (last == "GPT" ? "-" : ".") + part
+            } else if part.lowercased() == "gpt" { out.append("GPT") }
+            else { out.append(part.prefix(1).uppercased() + part.dropFirst()) }
+        }
+        return out.joined(separator: " ")
+    }
+}
+
+/// 창 머리 오른쪽 위: 녹음 단추. 메뉴 막대 아이콘이 노치 뒤로 가려져도 창에서 녹음할 수 있다
+struct TitleBarControls: View {
+    var body: some View {
+        RecordingTitleControl()
+            .padding(.trailing, 14)                               // 아래 본문 오른쪽 끝과 맞춘다
+    }
+}
+
+/// 녹음 단추 안의 막대 여섯 개 소리 모양 아이콘 (붉은 점 대신)
+private struct WaveformIcon: View {
+    private static let heights: [CGFloat] = [5, 9, 13, 8, 11, 5]
+    var body: some View {
+        HStack(spacing: 2) {
+            ForEach(Self.heights.indices, id: \.self) { Capsule().frame(width: 1.5, height: Self.heights[$0]) }
+        }
+        .frame(width: 15, height: 15)
+    }
+}
+
+/// 창 머리 알약 단추 모양: 주 단추(녹음)는 갈색 바탕에 흰 글자, 높이 32. 보조 단추(정리)는 연한 바탕에 갈색 글자, 높이 24. 테두리 없음.
+/// 단추 안의 내용만 바뀌고 알약은 그대로다. 커서를 올리면 바탕색이 한 단계 바뀐다
+private struct TitlePill<Content: View>: View {
+    var primary = false
+    @ViewBuilder var content: () -> Content
+    @State private var hover = false
+
+    var body: some View {
+        content()
+            .font(primary ? Brand.suit(12, .bold) : Brand.suit(12))
+            .foregroundStyle(primary ? .white : Brand.tabText)
+            .lineLimit(1).fixedSize()                              // 옆 문구에 밀려 두 줄로 꺾이지 않게
+            .padding(.horizontal, primary ? 30 : 10).frame(height: primary ? 32 : 24)
+            .background(Capsule().fill(primary ? (hover ? Brand.accentDark : Brand.accent) : hover ? Brand.pillFill.opacity(0.7) : Brand.pillFill))
+            .contentShape(Capsule())
+            .onHover { h in withAnimation(.easeOut(duration: 0.12)) { hover = h } }
+    }
+}
+
+/// 창 머리의 녹음: 메뉴 막대 녹음 줄과 같은 상태를 보인다. 평소 [● 녹음 시작], 녹음 중 [● 녹음 끝내기 12:31], 받아쓰는 중에는 알약 왼쪽에 "받아쓰는 중 37%".
 /// 새 녹음은 로그인을 마친 뒤에만, 끝내기는 언제나
 private struct RecordingTitleControl: View {
     @EnvironmentObject private var state: AppState
@@ -101,39 +215,34 @@ private struct RecordingTitleControl: View {
         HStack(spacing: 10) {
             if let problem = state.recordingProblem { problemButton(problem) }
             if let active = state.activeRecording {
-                HStack(spacing: 6) {
-                    Circle().fill(Color.red).frame(width: 7, height: 7)
-                    TimelineView(.periodic(from: .now, by: 1)) { context in
-                        Text("녹음 중 \(RecordingText.clock(context.date.timeIntervalSince1970 - active.startedAt))")
-                            .font(Brand.suit(11)).foregroundStyle(Brand.tabText).monospacedDigit()
-                    }
-                }
                 Button { Task { await state.stopRecording() } } label: {
-                    HStack(spacing: 5) {
-                        Rectangle().fill(Brand.ink).frame(width: 7, height: 7)
-                        Text("끝내기").font(Brand.suit(11, .medium)).foregroundStyle(Brand.ink)
+                    TitlePill(primary: true) {
+                        HStack(spacing: 7) {
+                            WaveformIcon()
+                            Text("녹음 끝내기")
+                            TimelineView(.periodic(from: .now, by: 1)) { context in
+                                Text(RecordingText.clock(context.date.timeIntervalSince1970 - active.startedAt)).monospacedDigit()
+                            }
+                        }
                     }
-                    .padding(.horizontal, 10).frame(height: 26)
-                    .background(RoundedRectangle(cornerRadius: 6).fill(Color(hex: 0xF3F1EF)))
-                    .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
+                .help("녹음을 끝내고 이 Mac 안에서 받아씁니다")
             } else if state.phase == .ready {
                 if let work = state.recordingWork {
                     HStack(spacing: 6) {
                         ProgressView().controlSize(.mini)
-                        Text(work.menuText).font(Brand.suit(11)).foregroundStyle(Brand.tabText)
+                        Text(work.menuText).font(Brand.suit(11)).foregroundStyle(Brand.tabText).lineLimit(1).truncationMode(.tail)
                     }
+                    .layoutPriority(-1)                               // 칸이 모자라면 단추 대신 이 문구가 줄어든다
                 }
                 Button { Task { await state.startRecording() } } label: {
-                    HStack(spacing: 6) {
-                        Circle().fill(Color.red).frame(width: 7, height: 7)
-                        Text("녹음 시작").font(Brand.suit(11))
+                    TitlePill(primary: true) {
+                        HStack(spacing: 9) {
+                            WaveformIcon()
+                            Text("녹음 시작")
+                        }
                     }
-                    .foregroundStyle(Brand.tabText)
-                    .padding(.horizontal, 8).frame(height: 26)
-                    .hoverHighlight(cornerRadius: 6)
-                    .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .help("마이크로 녹음하고, 끝내면 이 Mac 안에서 받아씁니다")
@@ -159,29 +268,43 @@ private struct RecordingTitleControl: View {
     }
 }
 
-/// 창 머리의 지금 정리: [↻ 지금 정리 14] (아이콘만으로는 알아보기 어려워 글자와 대기 수). 정리하는 동안에는 "정리하는 중…" (OUT-W5)
+/// 창 머리의 지금 정리: [↻ 14개 지금 정리] (굵은 대기 수와 보통 글자). 정리하는 동안에는 기호가 돌고, 끝나면 체크나 X 가 잠깐 보인다
 private struct TitleRefresh: View {
     @EnvironmentObject private var state: AppState
+    @State private var spin = false
     var body: some View {
-        if state.batchRunning {
-            HStack(spacing: 6) {
-                ProgressView().controlSize(.mini)
-                Text("정리하는 중…").font(Brand.suit(11)).foregroundStyle(Brand.tabText)
-            }
-        } else {
-            Button { Task { await state.runBatch(force: true) } } label: {
-                HStack(spacing: 5) {
-                    Image(systemName: "arrow.counterclockwise").font(.system(size: 11))
-                    Text("지금 정리").font(Brand.suit(11))
-                    if state.pendingCount > 0 { Text("\(state.pendingCount)").font(Brand.jost(12)).foregroundStyle(Brand.gray) }
+        Button { Task { await state.runBatch(force: true) } } label: {
+            TitlePill {
+                HStack(spacing: 6) {
+                    icon.frame(width: 13, height: 13)
+                    if state.batchRunning { Text("정리하는 중") }
+                    else {
+                        if state.pendingCount > 0 { Text("\(state.pendingCount)개").font(Brand.suit(12, .bold)).foregroundStyle(Color(hex: 0x4A3E37)) }
+                        Text("지금 정리").foregroundStyle(Color(hex: 0x6E6862))
+                    }
                 }
-                .foregroundStyle(Brand.tabText)
-                .padding(.horizontal, 8).frame(height: 26)
-                .hoverHighlight(cornerRadius: 6)
-                .contentShape(Rectangle())
+                .animation(.easeOut(duration: 0.2), value: state.batchResult)
             }
-            .buttonStyle(.plain)
-            .help("아직 정리되지 않은 활동을 지금 바로 그래프에 반영합니다")
+        }
+        .buttonStyle(.plain)
+        .disabled(state.batchRunning)
+        .help("아직 정리되지 않은 활동을 지금 바로 그래프에 반영합니다")
+        .onChange(of: state.batchRunning) { _, on in spin = on }
+        .onAppear { spin = state.batchRunning }
+    }
+
+    /// 정리하는 동안은 같은 기호가 돌고, 끝나면 파란 체크(성공)나 X(실패)로 잠깐 바뀐다
+    @ViewBuilder private var icon: some View {
+        if state.batchRunning {
+            SVGIcon(d: RailIcon.refresh).stroke(Brand.tabText, style: StrokeStyle(lineWidth: 2, lineCap: .round, lineJoin: .round))
+                .rotationEffect(.degrees(spin ? 360 : 0))
+                .animation(spin ? .linear(duration: 0.9).repeatForever(autoreverses: false) : .default, value: spin)
+        } else if state.batchResult == true {
+            Image(systemName: "checkmark.circle.fill").font(.system(size: 13, weight: .bold)).symbolRenderingMode(.palette).foregroundStyle(.white, Color(hex: 0x4A86C5)).transition(.scale.combined(with: .opacity))
+        } else if state.batchResult == false {
+            Image(systemName: "xmark.circle.fill").font(.system(size: 13, weight: .bold)).symbolRenderingMode(.palette).foregroundStyle(.white, Color(hex: 0xC0573F)).transition(.scale.combined(with: .opacity))
+        } else {
+            SVGIcon(d: RailIcon.refresh).stroke(Brand.tabText, style: StrokeStyle(lineWidth: 2, lineCap: .round, lineJoin: .round))
         }
     }
 }
@@ -189,7 +312,7 @@ private struct TitleRefresh: View {
 /// 업무 패널(업무 드로어): 그래프 탭에서 아이콘 줄 오른쪽에 열려 있는 업무 목록. 업무를 누르면 상세가 오른쪽으로 펼쳐지며 그래프를 덮지 않고 밀어낸다(그래프 폭이 줄어든다).
 /// ×나 Esc 로 접는다. 업무 상세는 이 드로어 하나다: 그래프에서 업무를 눌러도(AppState.openTaskDetail) 같은 드로어가 그 업무로 열린다. 다른 탭으로 가면 접힌다
 struct TasksPanel: View {
-    static let listWidth: CGFloat = 277                         // 업무 목록 276 + 구분선 1
+    static let listWidth: CGFloat = 277                         // 업무 목록 폭 (구분선 없이 바탕 톤으로 나눈다)
     static let maxDetail: CGFloat = 460
     static let minDetail: CGFloat = 340
     static let contentKeeps: CGFloat = 480                      // 드로어를 열어도 본문(그래프, 채팅)에 남기는 폭
@@ -209,7 +332,6 @@ struct TasksPanel: View {
         TasksView(selectedTask: state.selectedTaskId, showsDetail: expanded, onSelect: { state.openTaskDetail(id: $0) })   // 접히면 상세를 아예 안 그린다 (가려진 상세가 본문 클릭을 가로채지 않게)
             .frame(width: expanded ? Self.listWidth + detailWidth : Self.listWidth, alignment: .leading)
             .clipped()
-            .overlay(alignment: .trailing) { if expanded { Rectangle().fill(Brand.hairline).frame(width: 1) } }   // 밀려난 본문과 나누는 선
             .overlay(alignment: .topTrailing) {
                 if expanded {
                     Button { state.taskDetailOpen = false } label: {
@@ -250,61 +372,26 @@ struct RecordsView: View {
     }
 }
 
-/// 창 바탕을 유리로: 흰색을 직접 칠하지 않은 사이드바와 탭 막대 뒤로 바탕화면이 흐리게 비친다(마누스 시제품과 같은 구조).
-/// 창을 투명하게 하고 창 뒤를 흐린 뒤(WindowBlur) 흰 막을 얹는다. macOS 기본 유리는 흐림·흰 막을 정할 수 없어 하얗게 막혀 보인다
+/// 창 바탕: 불투명한 종이색. 창 뒤 바탕화면이 비치는 유리와 흐림은 10/28 걷어냈다
 private struct WindowGlassBackground: ViewModifier {
     func body(content: Content) -> some View {
-        let glass = content
-            .background(Group {
-                if WindowBlur.available { Color.white.opacity(Brand.glassWhite) } else { BehindWindowGlass() }
-            }.ignoresSafeArea())
-            .background(ClearWindow())
-        if #available(macOS 15.0, *) { glass.containerBackground(.clear, for: .window) } else { glass }
+        content.background(Brand.paper.ignoresSafeArea()).background(FrameMonitorHook())
     }
 }
 
-/// 이 뷰가 들어간 창을 투명하게 하고 창 뒤를 흐린다 (불투명한 창은 유리를 칠해도 뒤가 아니라 창 바탕이 보인다)
-private struct ClearWindow: NSViewRepresentable {
+/// 창이 붙으면 개발용 프레임 측정을 시작한다 (숨은 설정 frameLog)
+private struct FrameMonitorHook: NSViewRepresentable {
     final class View: NSView {
         override func viewDidMoveToWindow() {
             super.viewDidMoveToWindow()
-            guard let window else { return }
-            window.isOpaque = false
-            window.backgroundColor = .clear
-            WindowBlur.apply(Brand.glassBlur, to: window)
-            DispatchQueue.main.async { [weak window] in            // 창이 화면에 올라간 뒤 한 번 더 (창 번호가 그때 정해지는 경우)
-                if let window { WindowBlur.apply(Brand.glassBlur, to: window) }
-            }
-            if let content = window.contentView { FrameMonitor.shared.start(on: content) }   // 개발용 프레임 측정 (숨은 설정 frameLog)
+            if let content = window?.contentView { FrameMonitor.shared.start(on: content) }
         }
     }
     func makeNSView(context: Context) -> View { View() }
     func updateNSView(_ nsView: View, context: Context) {}
 }
 
-/// 창 뒤 흐림 반경을 정하는 macOS 비공개 함수 (iTerm2 의 '흐림' 설정이 쓰는 것).
-/// 없는 macOS 에서는 available 이 false 이고, 창 바탕은 기본 유리(BehindWindowGlass)로 그린다
-enum WindowBlur {
-    private typealias SetRadius = @convention(c) (UInt32, UInt32, UInt32) -> Int32
-    private typealias Connection = @convention(c) () -> UInt32
-    private static let functions: (set: SetRadius, connection: Connection)? = {
-        guard let handle = dlopen(nil, RTLD_NOW),
-              let set = dlsym(handle, "CGSSetWindowBackgroundBlurRadius"),
-              let connection = dlsym(handle, "CGSDefaultConnectionForThread") else { return nil }
-        return (unsafeBitCast(set, to: SetRadius.self), unsafeBitCast(connection, to: Connection.self))
-    }()
-
-    static var available: Bool { functions != nil }
-
-    /// 창 뒤를 radius 만큼 흐린다. 창 번호가 아직 없거나 함수가 없으면 false
-    @discardableResult
-    static func apply(_ radius: Int, to window: NSWindow) -> Bool {
-        guard let functions, window.windowNumber > 0 else { return false }
-        return functions.set(functions.connection(), UInt32(window.windowNumber), UInt32(radius)) == 0
-    }
-}
-
-/// macOS 15부터 창 제목 글자를 숨긴다 (창 머리에는 오른쪽 위 녹음·지금 정리만)
+/// macOS 15부터 창 제목 글자를 숨긴다 (창 머리에는 왼쪽 브랜드, 연결, 지금 정리와 오른쪽 녹음 단추만)
 private struct HideWindowTitle: ViewModifier {
     func body(content: Content) -> some View {
         if #available(macOS 15.0, *) { content.toolbar(removing: .title) } else { content }
@@ -321,7 +408,7 @@ struct MainWindow: View {
     /// WORKGRAPH_TAB=chat|records|files|history|library|settings|activity 로 시작 탭을 고를 수 있다 (개발·스크린샷용).
     static let initialTab: Tab = {
         switch ProcessInfo.processInfo.environment["WORKGRAPH_TAB"] {
-        case "settings", "activity": return .settings
+        case "settings", "ai", "activity": return .settings
         case "chat": return .chat
         case "records", "files", "history", "library": return .records
         default: return .graph                                   // 권한·로그인 안내는 온보딩이 맡는다
@@ -336,7 +423,7 @@ struct MainWindow: View {
         }
     }()
     /// WORKGRAPH_TAB=activity 면 설정의 활동 로그로 시작한다
-    static let initialSettingsSection: SettingsView.Section = ProcessInfo.processInfo.environment["WORKGRAPH_TAB"] == "activity" ? .activity : .general
+    static let initialSettingsSection: SettingsView.Section = ProcessInfo.processInfo.environment["WORKGRAPH_TAB"] == "activity" ? .activity : (ProcessInfo.processInfo.environment["WORKGRAPH_TAB"] == "ai" ? .ai : .general)
 
     private var ready: Bool { state.startupError == nil && state.bootstrapped && state.phase == .ready }
     /// 기기 코드 로그인이 꺼진 계정: 탭 대신 OUT-W1 카드
@@ -385,14 +472,16 @@ struct MainWindow: View {
         .overlay {
             if showsTabs, let step = state.onboardingStep { OnboardingOverlay(step: step) }
         }
-        .frame(minWidth: 1040, minHeight: 560)                  // 아이콘 줄 48 + 업무 목록 277 + 채팅 최소 700(대화 목록 200 + 본문 500)
+        .frame(minWidth: 1064, minHeight: 560)                  // 아이콘 줄 72 + 업무 목록 277 + 채팅 최소 700(대화 목록 200 + 본문 500) + 여유 15
         .sheet(item: $state.resumeRequest) { request in ResumeSheet(request: request).environmentObject(state) }
         .toolbar {
-            if showsTabs {                                       // 녹음, 지금 정리: 창 머리 오른쪽 위
+            if showsTabs {                                       // 왼쪽 브랜드, 연결, 지금 정리, 오른쪽 녹음
                 if #available(macOS 26.0, *) {
+                    ToolbarItem(placement: .navigation) { TitleBarBrand() }.sharedBackgroundVisibility(.hidden)
                     ToolbarSpacer(.flexible)
                     ToolbarItem { TitleBarControls() }.sharedBackgroundVisibility(.hidden)
                 } else {
+                    ToolbarItem(placement: .navigation) { TitleBarBrand() }
                     ToolbarItem { Spacer() }                     // macOS 15 는 항목을 왼쪽부터 놓는다(primaryAction 도 왼쪽). 빈 칸으로 오른쪽 끝에 민다
                     ToolbarItem { TitleBarControls() }
                 }

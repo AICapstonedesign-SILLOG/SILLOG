@@ -26,6 +26,7 @@ struct ChatView: View {
     @State private var showDelete = false
     @State private var selectedQuestionID: String?
     @State private var hoveredQuestionID: String?
+    @State private var expandedSources: Set<String> = []
 
     private var layout: some View {
         Group {
@@ -243,7 +244,7 @@ struct ChatView: View {
     private var conversation: some View {
         ScrollViewReader { proxy in
             HStack(spacing: 0) {
-                if chat.messages.contains(where: { $0.role == "user" }) {
+                if chat.messages.filter({ $0.role == "user" }).count > 1 {     // 질문이 하나면 옮겨 갈 곳이 없어 눈금을 숨긴다
                     GeometryReader { geometry in
                         let turns = conversationTurns
                         let step = min(28, max(10, (geometry.size.height - 36) / CGFloat(turns.count)))
@@ -301,7 +302,7 @@ struct ChatView: View {
                                 }
                         }
                         Color.clear.frame(height: 1).id("bottom")
-                    }.frame(maxWidth: 865).frame(maxWidth: .infinity).padding(.horizontal, 32).padding(.vertical, 24)
+                    }.frame(maxWidth: ChatPalette.columnWidth).frame(maxWidth: .infinity).padding(.horizontal, 32).padding(.vertical, 24)
                 }
                 .coordinateSpace(name: "chatTranscript")
                 .defaultScrollAnchor(.bottom)
@@ -416,11 +417,14 @@ struct ChatView: View {
                     ChatInput(text: $chat.draft, height: $inputHeight, minimumHeight: 38, focusRequest: chat.inputFocusRequest, onSend: sendDraft)
                         .frame(height: inputHeight)
                 }
-                sendButton.padding(.bottom, 4)
-            }.padding(.horizontal, 14).padding(.vertical, 6)
+            }.padding(.horizontal, 14).padding(.top, 6)
+            HStack(spacing: 0) {
+                composerToolbar
+                sendButton
+            }.padding(.horizontal, 12).padding(.bottom, 10).padding(.top, 2)
         }
-        .background(.white, in: RoundedRectangle(cornerRadius: 6))
-        .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(ChatPalette.inputLine))
+        .background(.white, in: RoundedRectangle(cornerRadius: 14))
+        .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(ChatPalette.inputLine))
     }
 
     /// 입력칸 안내: 업무·분야를 골랐으면 그 이름으로 (예: Flask 웹앱 개발에 대해 물어보세요, Flask 웹앱 개발 외 2에 대해 물어보세요)
@@ -431,40 +435,37 @@ struct ChatView: View {
 
     private var composerToolbar: some View {
         let busy = chat.activeMessage?.conversationID == chat.current.id
-        return HStack(spacing: 10) {
+        return HStack(spacing: 14) {
+            attachmentMenu
             Menu {
                 Button("자동 선택") { chat.current.skillID = "general" }
                 ForEach(chat.skills) { skill in Button(skill.title) { chat.current.skillID = skill.id } }
             } label: {
-                HStack {
+                HStack(spacing: 4) {
+                    Image(systemName: "sparkles").font(.system(size: 10))
                     Text(chat.skills.first(where: { $0.id == chat.current.skillID })?.title ?? "자동 선택")
-                        .font(Brand.suit(10)).foregroundStyle(Brand.text)
-                    Spacer(minLength: 4)
-                    Image(systemName: "chevron.down").font(.system(size: 9)).foregroundStyle(Brand.tabText)
-                }.padding(.horizontal, 9).frame(width: 95, height: 27)
-                    .overlay(RoundedRectangle(cornerRadius: 5).strokeBorder(Brand.line))
-            }.menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden).fixedSize()
+                    Image(systemName: "chevron.down").font(.system(size: 8))
+                }.font(Brand.suit(10)).foregroundStyle(Brand.tabText).contentShape(Rectangle())
+            }.menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden).fixedSize().help("스킬")
             Button { chat.current.scope.useWeb.toggle() } label: {
                 HStack(spacing: 4) {
                     Image(systemName: "globe").font(.system(size: 11))
                     Text(chat.current.scope.useWeb ? "웹 검색 켬" : "웹 검색 끔")
                 }.foregroundStyle(chat.current.scope.useWeb ? Brand.ink : Brand.gray)
             }
-            attachmentMenu
             Spacer()
         }.font(Brand.suit(10)).buttonStyle(.plain).disabled(busy)
     }
 
     private var composer: some View {
         VStack(alignment: .leading, spacing: 0) {
-            composerToolbar.padding(.top, 15).padding(.bottom, 0)
-            if !chat.current.scope.focus.isEmpty, chat.current.scope.useActivity, pendingRecords > 0 { tidyHint.padding(.top, 8) }
-            composerBox.padding(.top, 12)
+            if !chat.current.scope.focus.isEmpty, chat.current.scope.useActivity, pendingRecords > 0 { tidyHint.padding(.bottom, 8).padding(.leading, 4) }
+            composerBox
             Text("질문과 조회한 자료는 연결한 AI로 전송돼요. 웹 검색과 플러그인은 허용한 범위만 사용해요.")
-                .font(Brand.suit(9)).foregroundStyle(Brand.gray).frame(maxWidth: .infinity).padding(.vertical, 9)
-        }.padding(.horizontal, 27)
+                .font(Brand.suit(9)).foregroundStyle(Brand.gray).lineLimit(1).frame(maxWidth: .infinity).padding(.top, 8)
+        }.frame(maxWidth: ChatPalette.columnWidth).frame(maxWidth: .infinity)     // 대화 본문과 같은 폭
+            .padding(.horizontal, 32).padding(.top, 8).padding(.bottom, 14)
             .background(.white)
-            .overlay(alignment: .top) { Rectangle().fill(Brand.line).frame(height: 1) }
             .popover(isPresented: $showSources) { sourceOptions }
     }
 
@@ -502,7 +503,7 @@ struct ChatView: View {
             Image(systemName: chat.running ? "stop.fill" : "arrow.up")
                 .font(.system(size: 13, weight: .semibold)).foregroundStyle(.white)
                 .frame(width: 28, height: 28)
-                .background(Brand.ink.opacity(chat.running || !empty ? 1 : 0.38), in: RoundedRectangle(cornerRadius: 5))
+                .background(Brand.accent.opacity(chat.running || !empty ? 1 : 0.3), in: Circle())
         }.buttonStyle(.plain).disabled(!chat.running && empty)
             .help(chat.running ? "응답 중단" : "전송 (Enter)").accessibilityLabel(chat.running ? "응답 중단" : "전송")
     }
@@ -593,28 +594,18 @@ struct ChatView: View {
     /// Raises: 없음.
     @ViewBuilder private func messageView(_ message: ConversationMessage) -> some View {
         if message.role == "user" {
-            VStack(alignment: .leading, spacing: 12) {
-                HStack(spacing: 7) {
-                    Text("나").font(Brand.suit(9, .medium)).foregroundStyle(Brand.tabText)
-                        .frame(width: 21, height: 21).background(ChatPalette.soft, in: RoundedRectangle(cornerRadius: 4))
-                        .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(Brand.line))
-                    Text("나").font(Brand.suit(11, .medium)).foregroundStyle(Brand.ink)
-                }
-                Text(message.text).font(Brand.suit(12)).foregroundStyle(Brand.tabText).lineSpacing(5).textSelection(.enabled)
-                    .padding(.horizontal, 16).padding(.vertical, 11)
-                    .background(ChatPalette.soft, in: RoundedRectangle(cornerRadius: 6))
-                    .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Brand.line))
-            }.frame(maxWidth: .infinity, alignment: .leading)
+            // 내 질문: 오른쪽 말풍선 (이름표 없이)
+            Text(message.text).font(Brand.suit(12)).foregroundStyle(Brand.text).lineSpacing(5).textSelection(.enabled)
+                .padding(.horizontal, 14).padding(.vertical, 10)
+                .background(ChatPalette.soft, in: RoundedRectangle(cornerRadius: 12))
+                .frame(maxWidth: 560, alignment: .trailing)
+                .frame(maxWidth: .infinity, alignment: .trailing)
         } else {
+            // 답변: 아바타 없이 본문 그대로
             VStack(alignment: .leading, spacing: 12) {
-                HStack(spacing: 7) {
-                    Text("S").font(Brand.jost(13)).foregroundStyle(.white)
-                        .frame(width: 22, height: 22).background(Brand.ink, in: RoundedRectangle(cornerRadius: 5))
-                    Text("Sillog").font(Brand.suit(11, .medium)).foregroundStyle(Brand.ink)
-                    if chat.current.skillID != "general", let skill = chat.skills.first(where: { $0.id == chat.current.skillID }) {
-                        BrandBadge(skill.title)
-                    }
-                }.padding(.top, 12)
+                if chat.current.skillID != "general", let skill = chat.skills.first(where: { $0.id == chat.current.skillID }) {
+                    BrandBadge(skill.title)
+                }
                 if message.status == "running" || !message.steps.isEmpty {
                     DisclosureGroup {
                         ForEach(Array(message.steps.enumerated()), id: \.offset) { _, step in
@@ -637,26 +628,6 @@ struct ChatView: View {
                         .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Brand.line))
                 } else if !message.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     ChatMessageText(text: message.text, sources: message.sources) { source = $0 }
-                }
-                if !message.sources.isEmpty {
-                    HStack(spacing: 7) {
-                        Text("출처").font(Brand.suit(10)).foregroundStyle(Brand.gray)
-                        ScrollView(.horizontal, showsIndicators: false) {
-                            HStack(spacing: 7) {
-                                ForEach(Array(message.sources.enumerated()), id: \.element.id) { index, item in
-                                    Button { source = item } label: {
-                                        HStack(spacing: 6) {
-                                            Text("\(index + 1)").font(Brand.jost(9)).foregroundStyle(Brand.gray)
-                                            Text(item.title).font(Brand.suit(9)).foregroundStyle(Brand.tabText).lineLimit(1)
-                                            Image(systemName: "arrow.up.right").font(.system(size: 8)).foregroundStyle(Brand.gray)
-                                        }.padding(.horizontal, 7).frame(height: 26)
-                                            .background(.white, in: RoundedRectangle(cornerRadius: 4))
-                                            .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(Brand.line))
-                                    }.buttonStyle(.plain).help(item.title)
-                                }
-                            }
-                        }
-                    }
                 }
                 ForEach(message.artifacts) { item in
                     Button { artifact = item } label: {
@@ -688,10 +659,24 @@ struct ChatView: View {
                 }
                 if message.status != "running" {
                     HStack(spacing: 14) {
+                        if !message.sources.isEmpty {
+                            Button {
+                                withAnimation(.easeOut(duration: 0.15)) {
+                                    if expandedSources.contains(message.id) { expandedSources.remove(message.id) } else { expandedSources.insert(message.id) }
+                                }
+                            } label: {
+                                HStack(spacing: 4) {
+                                    Text("출처 \(message.sources.count)개")
+                                    Image(systemName: expandedSources.contains(message.id) ? "chevron.down" : "chevron.right").font(.system(size: 8))
+                                }
+                            }
+                        }
                         Button { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(message.text, forType: .string) } label: {
                             Image(systemName: "doc.on.doc")
                         }.help("답변 복사")
-                        if ["cancelled", "interrupted"].contains(message.status) { Text("중단됨").font(Brand.suit(10)) }
+                        if ["cancelled", "interrupted"].contains(message.status) {
+                            Label("중단됨", systemImage: "stop.circle").font(Brand.suit(11)).foregroundStyle(Brand.tabText)
+                        }
                         if message.status == "failed" {
                             Button("요청 다시 입력") {
                                 if let index = chat.messages.firstIndex(where: { $0.id == message.id }),
@@ -699,6 +684,22 @@ struct ChatView: View {
                             }.font(Brand.suit(10))
                         }
                     }.buttonStyle(.plain).foregroundStyle(Brand.gray).font(Brand.suit(11))
+                }
+                if expandedSources.contains(message.id) {
+                    // 본문의 [1] 번호와 맞도록 순서, 번호를 그대로 둔다
+                    VStack(alignment: .leading, spacing: 0) {
+                        ForEach(Array(message.sources.enumerated()), id: \.element.id) { index, item in
+                            Button { source = item } label: {
+                                HStack(spacing: 10) {
+                                    Text("\(index + 1)").font(Brand.jost(10)).foregroundStyle(Brand.gray).frame(width: 14, alignment: .trailing)
+                                    Text(item.title).font(Brand.suit(11)).foregroundStyle(Brand.tabText).lineLimit(1)
+                                    Spacer(minLength: 8)
+                                    Image(systemName: "arrow.up.right").font(.system(size: 9)).foregroundStyle(Brand.gray)
+                                }.frame(height: 28).contentShape(Rectangle())
+                            }.buttonStyle(.plain).help(item.title)
+                            .overlay(alignment: .top) { if index > 0 { Rectangle().fill(Brand.line).frame(height: 1) } }
+                        }
+                    }.frame(maxWidth: 520)
                 }
             }.frame(maxWidth: .infinity, alignment: .leading)
         }
@@ -742,8 +743,9 @@ struct ChatView: View {
 
 /// 채팅 화면 안에서 쓰는 보조 색
 enum ChatPalette {
-    static let soft = Color(hex: 0xF6F5F4)       // 말풍선, 칩, 대화 상자 머리글 바탕
+    static let soft = Brand.paper       // 말풍선, 칩, 대화 상자 머리글 바탕
     static let inputLine = Color(hex: 0xD8D2CD)  // 입력 상자 테두리
+    static let columnWidth: CGFloat = 865        // 대화 본문과 입력창이 함께 쓰는 최대 폭
 }
 
 /// 작은 상태 태그: 일부, 예정, 일시 중지됨

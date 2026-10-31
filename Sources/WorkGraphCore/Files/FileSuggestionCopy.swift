@@ -4,17 +4,18 @@ import Foundation
 public enum FileSuggestionCopy {
     public static let title = "파일을 정리할까요?"
 
-    /// "통계학_수업자료.pdf을 문서 / 통계학 폴더로 옮겨 보세요."
+    /// 두 줄: 파일 이름, 그 아래 옮길 곳 흐름. 한 문장에 다 넣으면 긴 이름에 섞여 안 읽혀서 나눈다(10/30)
+    /// "통계학_수업자료.pdf\n→ 문서 › 통계학"
     public static func body(fileName: String, folder: String, home: String) -> String {
-        "\(fileName)\(objectParticle(fileName)) \(folderLabel(folder, home: home)) 폴더로 옮겨 보세요."
+        "\(fileName)\n→ \(folderLabel(folder, home: home).replacingOccurrences(of: " / ", with: " › "))"
     }
 
     /// 받아쓴 녹음의 폴더 제안 알림 (버튼은 옮기기·무시 그대로)
     public static let recordingTitle = "받아쓴 녹음을 정리할까요?"
 
-    /// "'2026-10-10 자료구조 3주차 강의.md'를 문서 / 학교 / 자료구조 폴더로 옮겨 보세요." (.md 는 '엠디'로 읽어 '를')
+    /// 파일 정리 알림과 같은 두 줄: "2026-10-10 자료구조 3주차 강의.md\n→ 문서 › 학교 › 자료구조"
     public static func recordingBody(fileName: String, folder: String, home: String) -> String {
-        "'\(fileName)'를 \(folderLabel(folder, home: home)) 폴더로 옮겨 보세요."
+        body(fileName: fileName, folder: folder, home: home)
     }
 
     /// 폴더 제안이 없을 때: 저장한 곳만 알린다
